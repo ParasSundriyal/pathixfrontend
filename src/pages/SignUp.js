@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import './SignUp.css';
 import { GoogleLogin } from '@react-oauth/google';
 import { Link } from 'react-router-dom';
@@ -42,16 +42,58 @@ function PhoneOrgModal({ open, onClose, onSubmit, loading }) {
 }
 
 export default function SignUp() {
-  const [form, setForm] = useState({ email: '', password: '', phone: '', organization: '' });
+  const [form, setForm] = useState({ name: '', email: '', password: '', phone: '', organization: '', confirmPassword: '' });
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleCredential, setGoogleCredential] = useState(null);
   const [showModal, setShowModal] = useState(false);
   const [modalLoading, setModalLoading] = useState(false);
+  const [avatarFile, setAvatarFile] = useState(null);
+  const [avatarPreview, setAvatarPreview] = useState(null);
+  const [cameraOpen, setCameraOpen] = useState(false);
+  const videoRef = useRef(null);
+  const canvasRef = useRef(null);
 
   const handleChange = e => {
     setForm({ ...form, [e.target.name]: e.target.value });
+  };
+
+  const handleAvatarChange = e => {
+    const file = e.target.files[0];
+    setAvatarFile(file);
+    if (file) {
+      const reader = new FileReader();
+      reader.onloadend = () => setAvatarPreview(reader.result);
+      reader.readAsDataURL(file);
+    } else {
+      setAvatarPreview(null);
+    }
+  };
+
+  // Camera capture logic
+  const openCamera = async () => {
+    setCameraOpen(true);
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      if (videoRef.current) videoRef.current.srcObject = stream;
+    }
+  };
+  const closeCamera = () => {
+    setCameraOpen(false);
+    if (videoRef.current && videoRef.current.srcObject) {
+      videoRef.current.srcObject.getTracks().forEach(track => track.stop());
+    }
+  };
+  const capturePhoto = () => {
+    if (videoRef.current && canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      ctx.drawImage(videoRef.current, 0, 0, 128, 128);
+      const dataUrl = canvasRef.current.toDataURL('image/png');
+      setAvatarPreview(dataUrl);
+      setAvatarFile(dataUrl); // We'll handle this as a base64 string
+      closeCamera();
+    }
   };
 
   const handleSubmit = async e => {
@@ -59,21 +101,78 @@ export default function SignUp() {
     setLoading(true);
     setError('');
     setMessage('');
-    if (!form.email || !form.password) {
-      setError('Email and password are required.');
+    if (!form.email || !form.password || !form.name) {
+      setError('Name, email and password are required.');
+      setLoading(false);
+      return;
+    }
+    if (form.password !== form.confirmPassword) {
+      setError('Passwords do not match.');
       setLoading(false);
       return;
     }
     try {
+      // Send signup request with name
       const res = await fetch(`${process.env.REACT_APP_API_URL}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(form),
+        body: JSON.stringify({
+          name: form.name,
+          email: form.email,
+          password: form.password,
+          phone: form.phone,
+          organization: form.organization,
+        }),
       });
       const data = await res.json();
       if (res.ok) {
+        // If avatar selected, upload it
+        if (avatarFile) {
+          let base64, type;
+          if (typeof avatarFile === 'string' && avatarFile.startsWith('data:')) {
+            base64 = avatarFile.split(',')[1];
+            type = 'image/png';
+          } else {
+            const reader = new FileReader();
+            reader.onloadend = async () => {
+              base64 = reader.result.split(',')[1];
+              type = avatarFile.type;
+              await fetch('/api/auth/avatar', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${sessionStorage.getItem('token')}`,
+                },
+                body: JSON.stringify({
+                  avatar: base64,
+                  avatarType: type,
+                }),
+              });
+            };
+            reader.readAsDataURL(avatarFile);
+            setLoading(false);
+            setMessage('Sign up successful! You can now sign in.');
+            setForm({ name: '', email: '', password: '', phone: '', organization: '', confirmPassword: '' });
+            setAvatarFile(null);
+            setAvatarPreview(null);
+            return;
+          }
+          await fetch('/api/auth/avatar', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${sessionStorage.getItem('token')}`,
+            },
+            body: JSON.stringify({
+              avatar: base64,
+              avatarType: type,
+            }),
+          });
+        }
         setMessage('Sign up successful! You can now sign in.');
-        setForm({ email: '', password: '', phone: '', organization: '' });
+        setForm({ name: '', email: '', password: '', phone: '', organization: '', confirmPassword: '' });
+        setAvatarFile(null);
+        setAvatarPreview(null);
       } else {
         setError(data.message || 'Sign up failed.');
       }
@@ -97,6 +196,18 @@ export default function SignUp() {
       const data = await res.json();
       if (res.ok && data.token) {
         sessionStorage.setItem('token', data.token);
+        // Fetch user info to get Google name and photo
+        const meRes = await fetch('/api/auth/me', { headers: { Authorization: `Bearer ${data.token}` } });
+        const me = await meRes.json();
+        // If no name, use email prefix
+        if (!me.name && me.email) {
+          const name = me.email.split('@')[0];
+          await fetch('/api/auth/me', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.token}` },
+            body: JSON.stringify({ name }),
+          });
+        }
         setMessage('Google sign up successful! Redirecting...');
         setTimeout(() => window.location.href = '/dashboard', 1000);
       } else if (data.message && data.message.includes('Phone and organization')) {
@@ -150,10 +261,25 @@ export default function SignUp() {
           <div style={{ color: '#64748b', fontSize: '1rem', marginBottom: 8 }}>Join Pathix to create premium mapping solutions for your organization</div>
         </div>
         <form className="auth-form" onSubmit={handleSubmit} autoComplete="off" style={{ width: '100%' }}>
+          <div className="input-group" style={{ position: 'relative', textAlign: 'center' }}>
+            <label htmlFor="avatar" style={{ color: '#64748b', fontWeight: 500 }}>Profile Image</label>
+            <input name="avatar" id="avatar" type="file" accept="image/*" onChange={handleAvatarChange} style={{ margin: '0 auto' }} />
+            <button type="button" className="auth-btn secondary" style={{ margin: '8px auto', width: 'auto' }} onClick={openCamera}>Use Camera</button>
+            {avatarPreview && <img src={avatarPreview} alt="Preview" style={{ width: 64, height: 64, borderRadius: '50%', margin: '8px auto' }} />}
+          </div>
+          {cameraOpen && (
+            <div style={{ textAlign: 'center', marginBottom: 12 }}>
+              <video ref={videoRef} width={128} height={128} autoPlay style={{ borderRadius: 12, marginBottom: 8 }} />
+              <br />
+              <button type="button" className="auth-btn" style={{ width: 'auto', marginRight: 8 }} onClick={capturePhoto}>Capture</button>
+              <button type="button" className="auth-btn secondary" style={{ width: 'auto' }} onClick={closeCamera}>Cancel</button>
+              <canvas ref={canvasRef} width={128} height={128} style={{ display: 'none' }} />
+            </div>
+          )}
           <div className="input-group" style={{ position: 'relative' }}>
-            <label htmlFor="fullName" style={{ color: '#64748b', fontWeight: 500 }}>Full Name</label>
+            <label htmlFor="name" style={{ color: '#64748b', fontWeight: 500 }}>Full Name</label>
             <svg width="18" height="18" fill="none" stroke="#94a3b8" strokeWidth="2" viewBox="0 0 24 24" style={{ position: 'absolute', left: 12, top: 38, zIndex: 2 }}><circle cx="12" cy="8" r="4" /><path d="M6 20c0-2.21 3.58-4 6-4s6 1.79 6 4" /></svg>
-            <input name="fullName" type="text" placeholder="Enter your full name" value={form.fullName} onChange={handleChange} required style={{ paddingLeft: 36 }} />
+            <input name="name" type="text" placeholder="Enter your full name" value={form.name} onChange={handleChange} required style={{ paddingLeft: 36 }} />
           </div>
           <div className="input-group" style={{ position: 'relative' }}>
             <label htmlFor="email" style={{ color: '#64748b', fontWeight: 500 }}>Email Address</label>

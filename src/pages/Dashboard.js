@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
 import '../style_index.css';
+import '../pages/Dashboard.css';
 
 // Landmark palette data
 const landmarkIcons = [
@@ -121,6 +122,38 @@ export default function Dashboard() {
   const [shareUrl, setShareUrl] = useState('');
   const [bounds, setBounds] = useState({ minLat: null, maxLat: null, minLng: null, maxLng: null });
   const [dynamicScale, setDynamicScale] = useState(DEFAULT_SCALE);
+
+  // User info state
+  const [userInfo, setUserInfo] = useState({ name: '', avatar: '', email: '' });
+  const [uploading, setUploading] = useState(false);
+
+  // Example stats (replace with real data if available)
+  const stats = [
+    { label: 'Maps', value: maps.length },
+    { label: 'Landmarks', value: landmarks.length },
+    { label: 'Theme', value: theme.charAt(0).toUpperCase() + theme.slice(1) },
+  ];
+
+  // Sidebar icons (use emoji for now, can swap for SVGs/icons)
+  const sidebarIcons = [
+    { icon: '🗺️', label: 'Map' },
+    { icon: '➕', label: 'Add Landmark' },
+    { icon: '✏️', label: 'Draw Road' },
+    { icon: '📤', label: 'Export' },
+    { icon: '⚙️', label: 'Settings' },
+  ];
+
+  // FAB menu state
+  const [fabOpen, setFabOpen] = useState(false);
+  const fabActions = [
+    { icon: '🗺️', label: 'New Map', onClick: () => setShowMapNameModal(true) },
+    { icon: '➕', label: 'Add Landmark', onClick: () => setDragType('landmark') },
+    { icon: '✏️', label: 'Draw Road', onClick: () => setDrawing(true) },
+    { icon: '📤', label: 'Export', onClick: () => handleExport() },
+  ];
+
+  // User avatar (use avatar URL or fallback to initial)
+  const userInitial = userInfo.name ? userInfo.name[0].toUpperCase() : (userInfo.email ? userInfo.email[0].toUpperCase() : 'U');
 
   // Responsive resizing
   useEffect(() => {
@@ -811,17 +844,94 @@ export default function Dashboard() {
     return { x, y };
   }
 
+  // User info fetch
+  useEffect(() => {
+    const token = sessionStorage.getItem('token');
+    if (!token) return;
+    fetch('/api/auth/me', {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.name) setUserInfo(data);
+      })
+      .catch(() => {});
+  }, []);
+
+  // Handle avatar upload
+  const handleAvatarChange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = async () => {
+      const base64 = reader.result.split(',')[1];
+      setUploading(true);
+      const token = sessionStorage.getItem('token');
+      await fetch('/api/auth/avatar', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          avatar: base64,
+          avatarType: file.type,
+        }),
+      });
+      setUploading(false);
+      // Refetch user info
+      fetch('/api/auth/me', {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+        .then(res => res.json())
+        .then(data => {
+          if (data && data.name) setUserInfo(data);
+        });
+    };
+    reader.readAsDataURL(file);
+  };
+
   // Render
   return (
-    <>
-      <header>
-        <div className="app-title">
-          <span role="img" aria-label="map">🗺️</span>
-          <span>Pathix</span>
+    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)', overflowX: 'hidden' }}>
+      {/* Sidebar */}
+      <div className="sidebar">
+        {sidebarIcons.map((item, idx) => (
+          <div key={idx} className="sidebar-icon" title={item.label} tabIndex={0}>
+            {item.icon}
+          </div>
+        ))}
+      </div>
+      {/* User Profile (avatar + name) */}
+      <div className="user-profile">
+        <label htmlFor="avatar-upload" style={{ cursor: 'pointer', marginBottom: 0 }} title="Change profile picture">
+          {userInfo.avatar ? (
+            <img src={userInfo.avatar} alt="avatar" className="user-avatar" style={{ objectFit: 'cover' }} />
+          ) : (
+            <div className="user-avatar" title="Profile">{userInitial}</div>
+          )}
+          <input
+            id="avatar-upload"
+            type="file"
+            accept="image/*"
+            style={{ display: 'none' }}
+            onChange={handleAvatarChange}
+            disabled={uploading}
+          />
+        </label>
+        <span className="user-name">{userInfo.name || userInfo.email || 'User'}</span>
+      </div>
+      {/* Main Layout */}
+      <div className="main-layout" style={{ marginLeft: 90, paddingTop: 32, maxWidth: '100vw', overflowX: 'hidden' }}>
+        {/* Mini Stats Card */}
+        <div className="stats-card">
+          {stats.map((stat, idx) => (
+            <div className="stat" key={idx}>
+              <div style={{ fontWeight: 700, fontSize: 20 }}>{stat.value}</div>
+              <div className="stat-label">{stat.label}</div>
+            </div>
+          ))}
         </div>
-        <div className="subtitle">Design, annotate, and export property maps with ease</div>
-      </header>
-      <div className="main-layout">
         <div className="map-area glass-card">
           <div className="toolbar">
             {/* Hamburger menu for mobile */}
@@ -958,6 +1068,19 @@ export default function Dashboard() {
             {mapMessage && <div className="auth-success">{mapMessage}</div>}
           </div>
         </aside>
+        {/* Floating Action Button (FAB) */}
+        <button className="fab" onClick={() => setFabOpen(fab => !fab)} title="Quick Actions">
+          +
+        </button>
+        {fabOpen && (
+          <div className="fab-menu">
+            {fabActions.map((action, idx) => (
+              <button key={idx} onClick={() => { action.onClick(); setFabOpen(false); }}>
+                <span style={{ marginRight: 10 }}>{action.icon}</span> {action.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
       <MapNameModal open={showMapNameModal} onClose={() => setShowMapNameModal(false)} onSubmit={handleMapNameSubmit} loading={mapSaveLoading} />
       <footer style={{textAlign:'center', color:'var(--text-muted)', fontSize:'0.98em', marginBottom:18, marginTop:10}}>
@@ -976,6 +1099,6 @@ export default function Dashboard() {
           </div>
         </div>
       )}
-    </>
+    </div>
   );
 } 
