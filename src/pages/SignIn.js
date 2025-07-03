@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import './SignUp.css';
 import { GoogleLogin } from '@react-oauth/google';
+import { Link } from 'react-router-dom';
 
 function PhoneOrgModal({ open, onClose, onSubmit, loading }) {
   const [phone, setPhone] = useState('');
@@ -142,32 +143,51 @@ export default function SignIn() {
   };
 
   return (
-    <div className="auth-bg">
-      <div className="auth-card">
-        <div className="auth-title">Sign in to your account</div>
-        <form className="auth-form" onSubmit={handleSubmit} autoComplete="off">
-          <div className="input-group">
-            <label>Email</label>
-            <input name="email" type="email" placeholder="Enter your email" value={form.email} onChange={handleChange} required />
+    <div className="min-h-screen" style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div className="auth-card" style={{ width: '100%', maxWidth: 400, boxShadow: '0 8px 32px #a3bffa55' }}>
+        <div className="text-center" style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+            <svg width="32" height="32" fill="none" stroke="#2563eb" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 8 }}><path d="M12 21c-4.418 0-8-5.373-8-10a8 8 0 1 1 16 0c0 4.627-3.582 10-8 10z"/><circle cx="12" cy="11" r="3"/></svg>
+            <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1e293b' }}>Pathix</h1>
           </div>
-          <div className="input-group">
-            <label>Password</label>
-            <input name="password" type="password" placeholder="Password" value={form.password} onChange={handleChange} required minLength={6} />
-          </div>
-          <button className="auth-btn" type="submit" disabled={loading}>{loading ? 'Signing In...' : 'Sign In'}</button>
-        </form>
-        <div className="auth-divider"><span>or</span></div>
-        <div style={{width:'100%',display:'flex',justifyContent:'center'}}>
-          <GoogleLogin
-            onSuccess={handleGoogleSuccess}
-            onError={handleGoogleError}
-            width="100%"
-            useOneTap
-          />
+          <div style={{ fontSize: '1.2rem', fontWeight: 600, color: '#232946', marginBottom: 2 }}>Welcome Back</div>
+          <div style={{ color: '#64748b', fontSize: '1rem', marginBottom: 8 }}>Sign in to access your mapping dashboard</div>
         </div>
-        {message && <div className="auth-success">{message}</div>}
-        {error && <div className="auth-error">{error}</div>}
-        <div className="auth-footer">Don't have an account? <a href="/signup">Sign up</a></div>
+        <form className="auth-form" onSubmit={handleSubmit} autoComplete="off" style={{ width: '100%' }}>
+          <div className="input-group" style={{ position: 'relative' }}>
+            <label htmlFor="email" style={{ color: '#64748b', fontWeight: 500 }}>Email or Phone Number</label>
+            <svg width="18" height="18" fill="none" stroke="#94a3b8" strokeWidth="2" viewBox="0 0 24 24" style={{ position: 'absolute', left: 12, top: 38, zIndex: 2 }}><path d="M4 4h16v16H4z" fill="none"/><path d="M22 6l-10 7L2 6" /></svg>
+            <input name="email" type="text" placeholder="Enter your email or phone number" value={form.email} onChange={handleChange} required style={{ paddingLeft: 36 }} />
+          </div>
+          <div className="input-group" style={{ position: 'relative' }}>
+            <label htmlFor="password" style={{ color: '#64748b', fontWeight: 500 }}>Password</label>
+            <svg width="18" height="18" fill="none" stroke="#94a3b8" strokeWidth="2" viewBox="0 0 24 24" style={{ position: 'absolute', left: 12, top: 38, zIndex: 2 }}><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><circle cx="12" cy="10" r="1" /></svg>
+            <input name="password" type="password" placeholder="Password" value={form.password} onChange={handleChange} required minLength={6} style={{ paddingLeft: 36 }} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <input id="remember" type="checkbox" style={{ accentColor: '#2563eb', width: 16, height: 16, borderRadius: 4 }} />
+              <label htmlFor="remember" style={{ fontSize: 13, color: '#64748b' }}>Remember me</label>
+            </div>
+            <Link to="/forgot-password" style={{ fontSize: 13, color: '#2563eb', textDecoration: 'underline', fontWeight: 500 }}>Forgot password?</Link>
+          </div>
+          <button className="auth-btn" type="submit" disabled={loading} style={{ marginTop: 8 }}>{loading ? 'Signing In...' : 'Sign In'}</button>
+          <div className="auth-divider"><span>or</span></div>
+          <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={handleGoogleError}
+              width="100%"
+              useOneTap
+            />
+          </div>
+          {message && <div className="auth-success">{message}</div>}
+          {error && <div className="auth-error">{error}</div>}
+        </form>
+        <div className="auth-footer" style={{ marginTop: 18, textAlign: 'center', fontSize: 14 }}>
+          Don't have an account?
+          <Link to="/signup" style={{ color: '#2563eb', fontWeight: 600, marginLeft: 4, textDecoration: 'underline' }}>Sign up</Link>
+        </div>
       </div>
       <PhoneOrgModal open={showModal} onClose={() => setShowModal(false)} onSubmit={handleModalSubmit} loading={modalLoading} />
     </div>

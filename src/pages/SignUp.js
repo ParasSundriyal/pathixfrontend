@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import './SignUp.css';
 import { GoogleLogin } from '@react-oauth/google';
+import { Link } from 'react-router-dom';
 
 function PhoneOrgModal({ open, onClose, onSubmit, loading }) {
   const [phone, setPhone] = useState('');
@@ -138,40 +139,64 @@ export default function SignUp() {
   };
 
   return (
-    <div className="auth-bg">
-      <div className="auth-card">
-        <div className="auth-title">Create your account</div>
-        <form className="auth-form" onSubmit={handleSubmit} autoComplete="off">
-          <div className="input-group">
-            <label>Email</label>
-            <input name="email" type="email" placeholder="Enter your email" value={form.email} onChange={handleChange} required />
+    <div className="min-h-screen" style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div className="auth-card" style={{ width: '100%', maxWidth: 400, boxShadow: '0 8px 32px #a3bffa55' }}>
+        <div className="text-center" style={{ marginBottom: 24 }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 8 }}>
+            <svg width="32" height="32" fill="none" stroke="#2563eb" strokeWidth="2" viewBox="0 0 24 24" style={{ marginRight: 8 }}><path d="M12 21c-4.418 0-8-5.373-8-10a8 8 0 1 1 16 0c0 4.627-3.582 10-8 10z"/><circle cx="12" cy="11" r="3"/></svg>
+            <h1 style={{ fontSize: '1.5rem', fontWeight: 700, color: '#1e293b' }}>Pathix</h1>
           </div>
-          <div className="input-group">
-            <label>Password</label>
-            <input name="password" type="password" placeholder="Create a password" value={form.password} onChange={handleChange} required minLength={6} />
-          </div>
-          <div className="input-group">
-            <label>Phone</label>
-            <input name="phone" type="tel" placeholder="Phone number (optional)" value={form.phone} onChange={handleChange} />
-          </div>
-          <div className="input-group">
-            <label>Organization</label>
-            <input name="organization" type="text" placeholder="Organization name (optional)" value={form.organization} onChange={handleChange} />
-          </div>
-          <button className="auth-btn" type="submit" disabled={loading}>{loading ? 'Signing Up...' : 'Sign Up'}</button>
-        </form>
-        <div className="auth-divider"><span>or</span></div>
-        <div style={{width:'100%',display:'flex',justifyContent:'center'}}>
-          <GoogleLogin
-            onSuccess={handleGoogleSuccess}
-            onError={handleGoogleError}
-            width="100%"
-            useOneTap
-          />
+          <div style={{ fontSize: '1.2rem', fontWeight: 600, color: '#232946', marginBottom: 2 }}>Create Your Account</div>
+          <div style={{ color: '#64748b', fontSize: '1rem', marginBottom: 8 }}>Join Pathix to create premium mapping solutions for your organization</div>
         </div>
-        {message && <div className="auth-success">{message}</div>}
-        {error && <div className="auth-error">{error}</div>}
-        <div className="auth-footer">Already have an account? <a href="/signin">Sign in</a></div>
+        <form className="auth-form" onSubmit={handleSubmit} autoComplete="off" style={{ width: '100%' }}>
+          <div className="input-group" style={{ position: 'relative' }}>
+            <label htmlFor="fullName" style={{ color: '#64748b', fontWeight: 500 }}>Full Name</label>
+            <svg width="18" height="18" fill="none" stroke="#94a3b8" strokeWidth="2" viewBox="0 0 24 24" style={{ position: 'absolute', left: 12, top: 38, zIndex: 2 }}><circle cx="12" cy="8" r="4" /><path d="M6 20c0-2.21 3.58-4 6-4s6 1.79 6 4" /></svg>
+            <input name="fullName" type="text" placeholder="Enter your full name" value={form.fullName} onChange={handleChange} required style={{ paddingLeft: 36 }} />
+          </div>
+          <div className="input-group" style={{ position: 'relative' }}>
+            <label htmlFor="email" style={{ color: '#64748b', fontWeight: 500 }}>Email Address</label>
+            <svg width="18" height="18" fill="none" stroke="#94a3b8" strokeWidth="2" viewBox="0 0 24 24" style={{ position: 'absolute', left: 12, top: 38, zIndex: 2 }}><path d="M4 4h16v16H4z" fill="none"/><path d="M22 6l-10 7L2 6" /></svg>
+            <input name="email" type="email" placeholder="Enter your email" value={form.email} onChange={handleChange} required style={{ paddingLeft: 36 }} />
+          </div>
+          <div className="input-group" style={{ position: 'relative' }}>
+            <label htmlFor="phone" style={{ color: '#64748b', fontWeight: 500 }}>Phone Number</label>
+            <svg width="18" height="18" fill="none" stroke="#94a3b8" strokeWidth="2" viewBox="0 0 24 24" style={{ position: 'absolute', left: 12, top: 38, zIndex: 2 }}><rect x="2" y="6" width="20" height="12" rx="2" /><path d="M16 10h.01" /></svg>
+            <input name="phone" type="tel" placeholder="Enter your phone number" value={form.phone} onChange={handleChange} style={{ paddingLeft: 36 }} />
+          </div>
+          <div className="input-group" style={{ position: 'relative' }}>
+            <label htmlFor="organization" style={{ color: '#64748b', fontWeight: 500 }}>Organization Name</label>
+            <svg width="18" height="18" fill="none" stroke="#94a3b8" strokeWidth="2" viewBox="0 0 24 24" style={{ position: 'absolute', left: 12, top: 38, zIndex: 2 }}><rect x="3" y="7" width="18" height="10" rx="2" /><path d="M7 7v10M17 7v10" /></svg>
+            <input name="organization" type="text" placeholder="Enter your organization name" value={form.organization} onChange={handleChange} style={{ paddingLeft: 36 }} />
+          </div>
+          <div className="input-group" style={{ position: 'relative' }}>
+            <label htmlFor="password" style={{ color: '#64748b', fontWeight: 500 }}>Password</label>
+            <svg width="18" height="18" fill="none" stroke="#94a3b8" strokeWidth="2" viewBox="0 0 24 24" style={{ position: 'absolute', left: 12, top: 38, zIndex: 2 }}><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><circle cx="12" cy="10" r="1" /></svg>
+            <input name="password" type="password" placeholder="Create a password" value={form.password} onChange={handleChange} required minLength={6} style={{ paddingLeft: 36 }} />
+          </div>
+          <div className="input-group" style={{ position: 'relative' }}>
+            <label htmlFor="confirmPassword" style={{ color: '#64748b', fontWeight: 500 }}>Confirm Password</label>
+            <svg width="18" height="18" fill="none" stroke="#94a3b8" strokeWidth="2" viewBox="0 0 24 24" style={{ position: 'absolute', left: 12, top: 38, zIndex: 2 }}><circle cx="12" cy="12" r="10" /><path d="M12 16v-4" /><circle cx="12" cy="10" r="1" /></svg>
+            <input name="confirmPassword" type="password" placeholder="Confirm your password" value={form.confirmPassword} onChange={handleChange} required minLength={6} style={{ paddingLeft: 36 }} />
+          </div>
+          <button className="auth-btn" type="submit" disabled={loading} style={{ marginTop: 8 }}>{loading ? 'Signing Up...' : 'Create Account'}</button>
+          <div className="auth-divider"><span>or</span></div>
+          <div style={{ width: '100%', display: 'flex', justifyContent: 'center' }}>
+            <GoogleLogin
+              onSuccess={handleGoogleSuccess}
+              onError={handleGoogleError}
+              width="100%"
+              useOneTap
+            />
+          </div>
+          {message && <div className="auth-success">{message}</div>}
+          {error && <div className="auth-error">{error}</div>}
+        </form>
+        <div className="auth-footer" style={{ marginTop: 18, textAlign: 'center', fontSize: 14 }}>
+          Already have an account?
+          <Link to="/signin" style={{ color: '#2563eb', fontWeight: 600, marginLeft: 4, textDecoration: 'underline' }}>Sign in</Link>
+        </div>
       </div>
       <PhoneOrgModal open={showModal} onClose={() => setShowModal(false)} onSubmit={handleModalSubmit} loading={modalLoading} />
     </div>

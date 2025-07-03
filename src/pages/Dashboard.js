@@ -38,7 +38,7 @@ const themes = {
 };
 
 const DEFAULT_ORIGIN = { lat: 28.6139, lng: 77.2090 };
-const DEFAULT_SCALE = 10000;
+const DEFAULT_SCALE = 1; // Will be dynamically calculated
 
 const BG_IMAGE_SRC = '/Assets/bg1.png';
 const HOTEL_ICON_SRC = '/assets/landmark-hotel.png';
@@ -119,6 +119,8 @@ export default function Dashboard() {
   const [liveLocation, setLiveLocation] = useState(null); // {x, y}
   const [geoError, setGeoError] = useState('');
   const [shareUrl, setShareUrl] = useState('');
+  const [bounds, setBounds] = useState({ minLat: null, maxLat: null, minLng: null, maxLng: null });
+  const [dynamicScale, setDynamicScale] = useState(DEFAULT_SCALE);
 
   // Responsive resizing
   useEffect(() => {
@@ -197,9 +199,14 @@ export default function Dashboard() {
       stage.add(landmarkLayer);
     }
     // Draw existing roads
-    roads.forEach(points => {
+    roads.forEach(pointsArr => {
+      // Convert array of {lat, lng} to [x1, y1, x2, y2, ...]
+      const flatPoints = pointsArr.map(pt => {
+        const { x, y } = latLngToXY(pt.lat, pt.lng);
+        return [x, y];
+      }).flat();
       const line = new Konva.Line({
-        points,
+        points: flatPoints,
         stroke: themes[theme].roadColor,
         strokeWidth: 8,
         lineCap: 'round',
@@ -219,10 +226,11 @@ export default function Dashboard() {
     roadLayer.draw();
     // Draw live location marker if available
     if (gpsTracking && liveLocation) {
-      console.log('Drawing live marker at:', liveLocation.x, liveLocation.y, liveLocation.lat, liveLocation.lng);
+      const { x, y } = latLngToXY(liveLocation.lat, liveLocation.lng);
+      console.log('Drawing live marker at:', x, y, liveLocation.lat, liveLocation.lng);
       const marker = new Konva.Circle({
-        x: liveLocation.x,
-        y: liveLocation.y,
+        x,
+        y,
         radius: 12,
         fill: '#ff9800',
         stroke: '#fff',
@@ -402,23 +410,26 @@ export default function Dashboard() {
         if (!lastPos) {
           setGpsOrigin({ lat, lng });
           lastPos = { lat, lng };
+          setBounds({ minLat: lat, maxLat: lat, minLng: lng, maxLng: lng });
           // Start a new road with the first point
-          const x = stageSize.width / 2 + (lng - gpsOrigin.lng) * gpsScale;
-          const y = stageSize.height / 2 - (lat - gpsOrigin.lat) * gpsScale;
-          setRoads(r => [...r, [x, y]]);
-          setLiveLocation({ x, y, lat, lng });
+          setRoads(r => [...r, [{ lat, lng }]]);
+          setLiveLocation({ lat, lng });
           return;
         }
-        // Convert lat/lng to canvas x/y
-        const x = stageSize.width / 2 + (lng - gpsOrigin.lng) * gpsScale;
-        const y = stageSize.height / 2 - (lat - gpsOrigin.lat) * gpsScale;
-        setLiveLocation({ x, y, lat, lng });
+        // Update bounds
+        setBounds(prev => ({
+          minLat: Math.min(prev.minLat, lat),
+          maxLat: Math.max(prev.maxLat, lat),
+          minLng: Math.min(prev.minLng, lng),
+          maxLng: Math.max(prev.maxLng, lng),
+        }));
+        setLiveLocation({ lat, lng });
         setRoads(r => {
-          if (r.length === 0) return [[x, y]];
+          if (r.length === 0) return [[{ lat, lng }]];
           const last = r[r.length - 1];
-          return [...r.slice(0, -1), [...last, x, y]];
+          return [...r.slice(0, -1), [...last, { lat, lng }]];
         });
-        console.log('Live location updated:', { x, y, lat, lng });
+        console.log('Live location updated:', { lat, lng });
       },
       err => {
         setGpsStatus('Error');
@@ -770,6 +781,35 @@ export default function Dashboard() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
+
+  // Calculate dynamic scale and convert lat/lng to x/y
+  function latLngToXY(lat, lng) {
+    if (!gpsOrigin) return { x: 0, y: 0 };
+    // Use bounds to determine scale
+    let minLat = bounds.minLat ?? lat;
+    let maxLat = bounds.maxLat ?? lat;
+    let minLng = bounds.minLng ?? lng;
+    let maxLng = bounds.maxLng ?? lng;
+    // Add some padding
+    const padding = 0.0002;
+    minLat -= padding;
+    maxLat += padding;
+    minLng -= padding;
+    maxLng += padding;
+    // Calculate scale so all points fit in the canvas
+    const latRange = Math.abs(maxLat - minLat);
+    const lngRange = Math.abs(maxLng - minLng);
+    const scaleX = stageSize.width / (lngRange || 1);
+    const scaleY = stageSize.height / (latRange || 1);
+    const scale = Math.min(scaleX, scaleY);
+    // Centering
+    const centerLat = (minLat + maxLat) / 2;
+    const centerLng = (minLng + maxLng) / 2;
+    const x = stageSize.width / 2 + (lng - centerLng) * scale;
+    const y = stageSize.height / 2 - (lat - centerLat) * scale;
+    setDynamicScale(scale);
+    return { x, y };
+  }
 
   // Render
   return (
