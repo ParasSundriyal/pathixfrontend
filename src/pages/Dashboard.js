@@ -208,12 +208,21 @@ export default function Dashboard() {
       roadLayer.add(line);
     });
     roadLayer.draw();
+    // Debug: Draw a marker at the center of the canvas
+    const centerMarker = new Konva.Circle({
+      x: stageSize.width / 2,
+      y: stageSize.height / 2,
+      radius: 8,
+      fill: '#00f',
+    });
+    roadLayer.add(centerMarker);
+    roadLayer.draw();
     // Draw live location marker if available
-    if (gpsTracking && !liveLocation) {
-      // Add a test marker for debugging
+    if (gpsTracking && liveLocation) {
+      console.log('Drawing live marker at:', liveLocation.x, liveLocation.y, liveLocation.lat, liveLocation.lng);
       const marker = new Konva.Circle({
-        x: stageSize.width / 2,
-        y: stageSize.height / 2,
+        x: liveLocation.x,
+        y: liveLocation.y,
         radius: 12,
         fill: '#ff9800',
         stroke: '#fff',
@@ -223,7 +232,6 @@ export default function Dashboard() {
       });
       roadLayer.add(marker);
       roadLayer.draw();
-      console.log('Test live location marker drawn at center.');
     }
     // Draw simulated route
     if (simRoute) {
@@ -394,15 +402,21 @@ export default function Dashboard() {
         if (!lastPos) {
           setGpsOrigin({ lat, lng });
           lastPos = { lat, lng };
+          // Start a new road with the first point
+          const x = stageSize.width / 2 + (lng - gpsOrigin.lng) * gpsScale;
+          const y = stageSize.height / 2 - (lat - gpsOrigin.lat) * gpsScale;
+          setRoads(r => [...r, [x, y]]);
+          setLiveLocation({ x, y, lat, lng });
+          return;
         }
         // Convert lat/lng to canvas x/y
         const x = stageSize.width / 2 + (lng - gpsOrigin.lng) * gpsScale;
         const y = stageSize.height / 2 - (lat - gpsOrigin.lat) * gpsScale;
         setLiveLocation({ x, y, lat, lng });
         setRoads(r => {
-          const last = r[r.length - 1] || [];
-          // Add new point as {x, y, lat, lng}
-          return [...r.slice(0, -1), [...last, { x, y, lat, lng }]];
+          if (r.length === 0) return [[x, y]];
+          const last = r[r.length - 1];
+          return [...r.slice(0, -1), [...last, x, y]];
         });
         console.log('Live location updated:', { x, y, lat, lng });
       },
