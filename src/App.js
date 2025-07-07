@@ -8,6 +8,7 @@ import SignIn from './pages/SignIn';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import MapViewer from './pages/MapViewer';
 import HomePage from './components/HomePage';
+import Home2 from './pages/Home2';
 
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 
@@ -24,8 +25,10 @@ function App() {
           <Route path="/" element={<HomePage />} />
           <Route path="/signup" element={<SignUp />} />
           <Route path="/signin" element={<SignIn />} />
-          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          {/* <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} /> */}
+          <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/map/:id" element={<MapViewer />} />
+          <Route path="/home2" element={<Home2 />} />
         </Routes>
       </Router>
     </GoogleOAuthProvider>

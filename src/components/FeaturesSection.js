@@ -14,7 +14,7 @@ const features = [
   {
     icon: '🎨',
     title: 'Custom Branding',
-    description: 'Match your organization\'s branding with custom colors, logos, and styling options.'
+    description: "Match your organization's branding with custom colors, logos, and styling options."
   },
   {
     icon: '📊',
@@ -33,56 +33,20 @@ const features = [
   }
 ];
 
-const cardBase = {
-  background: '#f8fafc',
-  borderRadius: 16,
-  boxShadow: '0 2px 8px #e0e7ff',
-  padding: 32,
-  textAlign: 'center',
-  transition: 'box-shadow 0.3s, transform 0.18s',
-  border: '1px solid #e0e7ff',
-  color: '#1e293b',
-  cursor: 'pointer',
-};
-const cardHover = {
-  boxShadow: '0 8px 32px #a3bffa33',
-  transform: 'translateY(-4px) scale(1.03)',
-};
-
-function useCardHover() {
-  const [hover, setHover] = React.useState(null);
-  const getStyle = idx => (hover === idx ? { ...cardBase, ...cardHover } : cardBase);
-  return [
-    getStyle,
-    idx => ({
-      onMouseEnter: () => setHover(idx),
-      onMouseLeave: () => setHover(null),
-      tabIndex: 0,
-      onFocus: () => setHover(idx),
-      onBlur: () => setHover(null),
-    }),
-  ];
-}
-
 const FeaturesSection = () => {
-  const [getCardStyle, cardEvents] = useCardHover();
   return (
-    <section style={{ padding: '80px 0', background: '#fff' }}>
-      <div style={{ maxWidth: 1100, margin: '0 auto' }}>
-        <div style={{ textAlign: 'center', marginBottom: 64 }}>
-          <h2 style={{ fontSize: '2rem', fontWeight: 700, color: '#1e293b', marginBottom: 24 }}>
-            Why Choose Pathix?
-          </h2>
-          <p style={{ fontSize: '1.1rem', color: '#64748b', maxWidth: 600, margin: '0 auto' }}>
-            Powerful features designed specifically for organizations that need professional mapping solutions
-          </p>
+    <section className="w-full py-20 bg-gradient-to-br from-[#232946] to-[#181c2a] flex flex-col items-center justify-center">
+      <div className="max-w-6xl mx-auto px-4">
+        <div className="text-center mb-16">
+          <h2 className="text-3xl md:text-4xl font-extrabold text-white mb-4 drop-shadow-lg">Why Choose Pathix?</h2>
+          <p className="text-lg text-gray-300 max-w-2xl mx-auto">Powerful features designed specifically for organizations that need professional mapping solutions</p>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: 32 }}>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-8">
           {features.map((feature, idx) => (
-            <div key={idx} style={getCardStyle(idx)} {...cardEvents(idx)}>
-              <div style={{ fontSize: 48, marginBottom: 16 }}>{feature.icon}</div>
-              <div style={{ fontWeight: 600, fontSize: '1.2rem', marginBottom: 8 }}>{feature.title}</div>
-              <div style={{ color: '#64748b', fontSize: '1rem' }}>{feature.description}</div>
+            <div key={idx} className="rounded-2xl bg-white/10 border border-white/10 shadow-xl p-8 flex flex-col items-center text-center backdrop-blur-xl hover:scale-105 hover:shadow-2xl transition-all duration-200">
+              <div className="text-5xl mb-4 drop-shadow-lg">{feature.icon}</div>
+              <div className="font-bold text-xl text-white mb-2">{feature.title}</div>
+              <div className="text-gray-300 text-base">{feature.description}</div>
             </div>
           ))}
         </div>

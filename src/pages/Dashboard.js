@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import Konva from 'konva';
 import '../style_index.css';
-import '../pages/Dashboard.css';
+import logo from '../logo.svg';
 
 // Landmark palette data
 const landmarkIcons = [
@@ -45,6 +45,10 @@ const BG_IMAGE_SRC = '/Assets/bg1.png';
 const HOTEL_ICON_SRC = '/assets/landmark-hotel.png';
 
 const isMobile = () => /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+const isSafari = () => {
+  const ua = navigator.userAgent;
+  return /Safari/.test(ua) && !/Chrome|Chromium|Android/.test(ua);
+};
 
 function MapNameModal({ open, onClose, onSubmit, loading }) {
   const [name, setName] = useState('');
@@ -77,6 +81,21 @@ function MapNameModal({ open, onClose, onSubmit, loading }) {
   );
 }
 
+// Haversine formula to get distance in meters between two lat/lng points
+function getDistanceMeters(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // meters
+  const toRad = x => x * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+            Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) *
+            Math.sin(dLng/2) * Math.sin(dLng/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c;
+}
+
+const LOCAL_CACHE_KEY = 'pathix_offline_map';
+
 export default function Dashboard() {
   const containerRef = useRef();
   const stageRef = useRef();
@@ -87,11 +106,16 @@ export default function Dashboard() {
   const [simRoute, setSimRoute] = useState(null);
   const [exportMsg, setExportMsg] = useState('');
   const [dragType, setDragType] = useState(null);
+  const [selectedAssetType, setSelectedAssetType] = useState(null); // For mobile tap-to-place
   const [landmarks, setLandmarks] = useState([]); // {type, x, y, label}
   const [roads, setRoads] = useState([]); // array of arrays of points
+  const roadsRef = useRef([]); // Ref for roads to avoid race conditions
+  // Keep roadsRef in sync with state
+  useEffect(() => { roadsRef.current = roads; }, [roads]);
   const [currentLine, setCurrentLine] = useState(null);
   const [stageSize, setStageSize] = useState({ width: 800, height: 500 });
   const [scale, setScale] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
   const [popup, setPopup] = useState(null); // {x, y, idx, label}
   const [gpsOrigin, setGpsOrigin] = useState(DEFAULT_ORIGIN);
   const [gpsScale] = useState(DEFAULT_SCALE);
@@ -104,6 +128,7 @@ export default function Dashboard() {
   const [lastCenter, setLastCenter] = useState(null);
   const [simulated, setSimulated] = useState(false);
   const gpsWatchId = useRef(null);
+  const lastPosRef = useRef(null); // Persist last GPS position
   const [popupAbs, setPopupAbs] = useState(null); // {left, top, idx, label}
   const [popupOpen, setPopupOpen] = useState(false);
   const [popupInput, setPopupInput] = useState('');
@@ -119,6 +144,7 @@ export default function Dashboard() {
   const [isMobileScreen, setIsMobileScreen] = useState(window.innerWidth <= 600);
   const [liveLocation, setLiveLocation] = useState(null); // {x, y}
   const [geoError, setGeoError] = useState('');
+  const [gpsSignalLost, setGpsSignalLost] = useState(false);
   const [shareUrl, setShareUrl] = useState('');
   const [bounds, setBounds] = useState({ minLat: null, maxLat: null, minLng: null, maxLng: null });
   const [dynamicScale, setDynamicScale] = useState(DEFAULT_SCALE);
@@ -131,7 +157,6 @@ export default function Dashboard() {
   const stats = [
     { label: 'Maps', value: maps.length },
     { label: 'Landmarks', value: landmarks.length },
-    { label: 'Theme', value: theme.charAt(0).toUpperCase() + theme.slice(1) },
   ];
 
   // Sidebar icons (use emoji for now, can swap for SVGs/icons)
@@ -157,14 +182,31 @@ export default function Dashboard() {
 
   // Responsive resizing
   useEffect(() => {
-    function handleResize() {
-      const width = Math.min(900, window.innerWidth - 40);
-      const height = Math.max(400, Math.round(width * 0.625));
+    function updateSize() {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      let width = rect.width;
+      let height;
+      if (window.innerWidth <= 600) {
+        // On mobile, use a 1:1 aspect ratio and a minimum height
+        height = Math.max(width, 250);
+      } else {
+        height = width * 0.625; // 16:10 aspect ratio for desktop
+      }
       setStageSize({ width, height });
     }
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
+    updateSize();
+    let resizeObserver;
+    if (window.ResizeObserver) {
+      resizeObserver = new ResizeObserver(updateSize);
+      if (containerRef.current) resizeObserver.observe(containerRef.current);
+    } else {
+      window.addEventListener('resize', updateSize);
+    }
+    return () => {
+      if (resizeObserver && containerRef.current) resizeObserver.unobserve(containerRef.current);
+      window.removeEventListener('resize', updateSize);
+    };
   }, []);
 
   // Load background and hotel icon images
@@ -186,8 +228,10 @@ export default function Dashboard() {
       container: containerRef.current,
       width,
       height,
-      scaleX: scale,
-      scaleY: scale,
+      // scaleX: scale, // REMOVE
+      // scaleY: scale, // REMOVE
+      x: pan.x,
+      y: pan.y,
     });
     stageRef.current = stage;
     // Layers
@@ -197,6 +241,9 @@ export default function Dashboard() {
     stage.add(backgroundLayer);
     stage.add(roadLayer);
     stage.add(landmarkLayer);
+    // Clear old objects to prevent memory leaks
+    roadLayer.destroyChildren();
+    landmarkLayer.destroyChildren();
     // Draw background image or color
     if (bgImageLoaded && bgImage) {
       const bg = new Konva.Image({ image: bgImage, width, height, opacity: 1 });
@@ -232,12 +279,23 @@ export default function Dashboard() {
       stage.add(landmarkLayer);
     }
     // Draw existing roads
-    roads.forEach(pointsArr => {
+    // Limit total points for performance
+    const MAX_POINTS = 1000;
+    let totalPoints = 0;
+    for (let i = 0; i < roads.length; i++) {
+      let pointsArr = roads[i];
+      // Downsample if too many points
+      if (pointsArr.length > 2 && pointsArr.length > MAX_POINTS / roads.length) {
+        const step = Math.ceil(pointsArr.length / (MAX_POINTS / roads.length));
+        pointsArr = pointsArr.filter((_, idx) => idx % step === 0 || idx === pointsArr.length - 1);
+      }
       // Convert array of {lat, lng} to [x1, y1, x2, y2, ...]
       const flatPoints = pointsArr.map(pt => {
         const { x, y } = latLngToXY(pt.lat, pt.lng);
         return [x, y];
       }).flat();
+      totalPoints += pointsArr.length;
+      if (totalPoints > MAX_POINTS) break;
       const line = new Konva.Line({
         points: flatPoints,
         stroke: themes[theme].roadColor,
@@ -246,8 +304,8 @@ export default function Dashboard() {
         lineJoin: 'round',
       });
       roadLayer.add(line);
-    });
-    roadLayer.draw();
+    }
+    roadLayer.batchDraw();
     // Debug: Draw a marker at the center of the canvas
     const centerMarker = new Konva.Circle({
       x: stageSize.width / 2,
@@ -378,7 +436,7 @@ export default function Dashboard() {
       stage.destroy();
     };
     // eslint-disable-next-line
-  }, [theme, roads, landmarks, simRoute, scale, stageSize, bgImageLoaded, bgImage, hotelIconLoaded, hotelIcon, liveLocation, gpsTracking]);
+  }, [theme, roads, landmarks, simRoute, scale, stageSize, bgImageLoaded, bgImage, hotelIconLoaded, hotelIcon, liveLocation, gpsTracking, pan]);
 
   // Handle theme switching
   useEffect(() => {
@@ -426,7 +484,7 @@ export default function Dashboard() {
     setScale(s => Math.max(0.5, s / 1.1));
   }
   // GPS tracking
-  function handleStartGPS() {
+  function handleStartGPS(highAccuracy = true, retryCount = 0) {
     if (!navigator.geolocation) {
       setGpsStatus('Not supported');
       setGeoError('Geolocation is not supported by your browser.');
@@ -436,45 +494,156 @@ export default function Dashboard() {
     setGpsTracking(true);
     setGpsStatus('ON');
     setSimulated(false);
-    let lastPos = null;
-    let watchId = navigator.geolocation.watchPosition(
-      pos => {
-        const { latitude: lat, longitude: lng } = pos.coords;
-        if (!lastPos) {
-          setGpsOrigin({ lat, lng });
-          lastPos = { lat, lng };
-          setBounds({ minLat: lat, maxLat: lat, minLng: lng, maxLng: lng });
-          // Start a new road with the first point
-          setRoads(r => [...r, [{ lat, lng }]]);
-          setLiveLocation({ lat, lng });
-          return;
-        }
-        // Update bounds
-        setBounds(prev => ({
-          minLat: Math.min(prev.minLat, lat),
-          maxLat: Math.max(prev.maxLat, lat),
-          minLng: Math.min(prev.minLng, lng),
-          maxLng: Math.max(prev.maxLng, lng),
-        }));
-        setLiveLocation({ lat, lng });
-        setRoads(r => {
-          if (r.length === 0) return [[{ lat, lng }]];
-          const last = r[r.length - 1];
-          return [...r.slice(0, -1), [...last, { lat, lng }]];
-        });
-        console.log('Live location updated:', { lat, lng });
-      },
-      err => {
-        setGpsStatus('Error');
-        setGpsTracking(false);
-        setLiveLocation(null);
-        setGeoError('Unable to retrieve your location. Please allow location access.');
-        console.error('Geolocation error:', err);
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
-    );
-    // Stop GPS on unmount
-    return () => navigator.geolocation.clearWatch(watchId);
+    setGpsSignalLost(false);
+    lastPosRef.current = null;
+    const maxRetries = 3;
+    const retryDelay = 2000;
+    if (isSafari()) {
+      // Safari: Poll getCurrentPosition every 2s
+      let stopped = false;
+      function poll(currentRetry = 0, useHighAccuracy = highAccuracy) {
+        if (stopped) return;
+        navigator.geolocation.getCurrentPosition(
+          pos => {
+            setGpsSignalLost(false);
+            const { latitude: lat, longitude: lng } = pos.coords;
+            if (!lastPosRef.current) {
+              setGpsOrigin({ lat, lng });
+              lastPosRef.current = { lat, lng };
+              setBounds({ minLat: lat, maxLat: lat, minLng: lng, maxLng: lng });
+              const newRoads = [...roadsRef.current, [{ lat, lng }]];
+              roadsRef.current = newRoads;
+              setRoads(newRoads);
+              setLiveLocation({ lat, lng });
+              return;
+            }
+            const dist = getDistanceMeters(lastPosRef.current.lat, lastPosRef.current.lng, lat, lng);
+            if (dist > 30) {
+              console.warn('GPS jump filtered:', dist, 'meters');
+              return;
+            }
+            lastPosRef.current = { lat, lng };
+            setBounds(prev => ({
+              minLat: Math.min(prev.minLat, lat),
+              maxLat: Math.max(prev.maxLat, lat),
+              minLng: Math.min(prev.minLng, lng),
+              maxLng: Math.max(prev.maxLng, lng),
+            }));
+            setLiveLocation({ lat, lng });
+            let newRoads;
+            if (roadsRef.current.length === 0) {
+              newRoads = [[{ lat, lng }]];
+            } else {
+              const last = roadsRef.current[roadsRef.current.length - 1];
+              const lastPoint = last[last.length - 1];
+              if (lastPoint && lastPoint.lat === lat && lastPoint.lng === lng) {
+                newRoads = [...roadsRef.current]; // skip duplicate
+              } else {
+                newRoads = [...roadsRef.current.slice(0, -1), [...last, { lat, lng }]];
+              }
+            }
+            roadsRef.current = newRoads;
+            setRoads(newRoads);
+            console.log('Live location updated:', { lat, lng });
+          },
+          err => {
+            setGpsSignalLost(true);
+            if (err.code === 1) { // PERMISSION_DENIED
+              setGeoError('Location permission denied. Please allow access and retry.');
+            } else if (err.code === 2) { // POSITION_UNAVAILABLE
+              setGeoError('Location unavailable. Try moving to an open area.');
+            } else if (err.code === 3) { // TIMEOUT
+              setGeoError('Location request timed out.');
+            } else {
+              setGeoError('Unable to retrieve your location.');
+            }
+            if (useHighAccuracy && currentRetry < maxRetries) {
+              setTimeout(() => poll(currentRetry + 1, false), retryDelay);
+            } else if (currentRetry < maxRetries) {
+              setTimeout(() => poll(currentRetry + 1, useHighAccuracy), retryDelay);
+            }
+          },
+          { enableHighAccuracy: useHighAccuracy, maximumAge: 0, timeout: 15000 }
+        );
+        setTimeout(() => poll(0, highAccuracy), 2000);
+      }
+      poll();
+      // Return stop function
+      return () => { stopped = true; };
+    } else {
+      // Chrome/other: use watchPosition
+      let watchId = null;
+      let retriedHighAccuracy = false;
+      function startWatch(useHighAccuracy = highAccuracy, currentRetry = 0) {
+        if (watchId) navigator.geolocation.clearWatch(watchId);
+        watchId = navigator.geolocation.watchPosition(
+          pos => {
+            setGpsSignalLost(false);
+            const { latitude: lat, longitude: lng } = pos.coords;
+            if (!lastPosRef.current) {
+              setGpsOrigin({ lat, lng });
+              lastPosRef.current = { lat, lng };
+              setBounds({ minLat: lat, maxLat: lat, minLng: lng, maxLng: lng });
+              const newRoads = [...roadsRef.current, [{ lat, lng }]];
+              roadsRef.current = newRoads;
+              setRoads(newRoads);
+              setLiveLocation({ lat, lng });
+              return;
+            }
+            // GPS drift filter: ignore if jump > 30m
+            const dist = getDistanceMeters(lastPosRef.current.lat, lastPosRef.current.lng, lat, lng);
+            if (dist > 30) {
+              console.warn('GPS jump filtered:', dist, 'meters');
+              return;
+            }
+            lastPosRef.current = { lat, lng };
+            setBounds(prev => ({
+              minLat: Math.min(prev.minLat, lat),
+              maxLat: Math.max(prev.maxLat, lat),
+              minLng: Math.min(prev.minLng, lng),
+              maxLng: Math.max(prev.maxLng, lng),
+            }));
+            setLiveLocation({ lat, lng });
+            let newRoads;
+            if (roadsRef.current.length === 0) {
+              newRoads = [[{ lat, lng }]];
+            } else {
+              const last = roadsRef.current[roadsRef.current.length - 1];
+              const lastPoint = last[last.length - 1];
+              if (lastPoint && lastPoint.lat === lat && lastPoint.lng === lng) {
+                newRoads = [...roadsRef.current]; // skip duplicate
+              } else {
+                newRoads = [...roadsRef.current.slice(0, -1), [...last, { lat, lng }]];
+              }
+            }
+            roadsRef.current = newRoads;
+            setRoads(newRoads);
+            console.log('Live location updated:', { lat, lng });
+          },
+          err => {
+            setGpsSignalLost(true);
+            if (err.code === 1) { // PERMISSION_DENIED
+              setGeoError('Location permission denied. Please allow access and retry.');
+            } else if (err.code === 2) { // POSITION_UNAVAILABLE
+              setGeoError('Location unavailable. Try moving to an open area.');
+            } else if (err.code === 3) { // TIMEOUT
+              setGeoError('Location request timed out.');
+            } else {
+              setGeoError('Unable to retrieve your location.');
+            }
+            if (useHighAccuracy && currentRetry < maxRetries) {
+              setTimeout(() => startWatch(false, currentRetry + 1), retryDelay);
+            } else if (currentRetry < maxRetries) {
+              setTimeout(() => startWatch(useHighAccuracy, currentRetry + 1), retryDelay);
+            }
+          },
+          { enableHighAccuracy: useHighAccuracy, maximumAge: 0, timeout: 15000 }
+        );
+      }
+      startWatch();
+      // Stop GPS on unmount
+      return () => { if (watchId) navigator.geolocation.clearWatch(watchId); };
+    }
   }
   function handleStopGPS() {
     setGpsTracking(false);
@@ -518,13 +687,39 @@ export default function Dashboard() {
       if (e.cancelBubble) return;
       e.preventDefault();
       const type = target.getAttribute('data-type');
-      // Place at center of canvas
-      const { width, height } = stageSize;
-      setLandmarks(lms => [...lms, { type, x: width/2, y: height/2 }]);
+      setSelectedAssetType(type); // Wait for user to tap map
     };
     palette.addEventListener('touchend', handler, { passive: false });
     return () => palette.removeEventListener('touchend', handler);
   }, [stageSize]);
+
+  // Mobile: tap on map to place asset
+  useEffect(() => {
+    if (!isMobile() || !selectedAssetType) return;
+    const container = containerRef.current;
+    if (!container) return;
+    const handler = (e) => {
+      // Only respond to single taps
+      if (e.touches && e.touches.length > 1) return;
+      const rect = container.getBoundingClientRect();
+      let x, y;
+      if (e.touches && e.touches.length === 1) {
+        x = (e.touches[0].clientX - rect.left) / scale;
+        y = (e.touches[0].clientY - rect.top) / scale;
+      } else {
+        x = (e.clientX - rect.left) / scale;
+        y = (e.clientY - rect.top) / scale;
+      }
+      setLandmarks(lms => [...lms, { type: selectedAssetType, x, y }]);
+      setSelectedAssetType(null);
+    };
+    container.addEventListener('touchend', handler, { passive: false });
+    container.addEventListener('click', handler, { passive: false });
+    return () => {
+      container.removeEventListener('touchend', handler);
+      container.removeEventListener('click', handler);
+    };
+  }, [selectedAssetType, scale]);
 
   // --- Landmark label popup with outside click ---
   useEffect(() => {
@@ -608,6 +803,7 @@ export default function Dashboard() {
       stage.draggable(false);
       lastDist = null;
       lastCenter = null;
+      setPan({ x: stage.x(), y: stage.y() });
     }
     function onTouchMove(e) {
       if (e.evt.touches && e.evt.touches.length === 2) {
@@ -628,6 +824,7 @@ export default function Dashboard() {
           const dy = center.y - lastCenter.y;
           stage.position({ x: stage.x() + dx, y: stage.y() + dy });
           stage.batchDraw();
+          setPan({ x: stage.x() + dx, y: stage.y() + dy });
         }
         lastDist = dist;
         lastCenter = center;
@@ -714,6 +911,25 @@ export default function Dashboard() {
     fetchMaps();
   }, []);
 
+  // Restore from cache on mount
+  useEffect(() => {
+    try {
+      const cached = localStorage.getItem(LOCAL_CACHE_KEY);
+      if (cached) {
+        const { roads: cachedRoads, landmarks: cachedLandmarks } = JSON.parse(cached);
+        if (Array.isArray(cachedRoads)) setRoads(cachedRoads);
+        if (Array.isArray(cachedLandmarks)) setLandmarks(cachedLandmarks);
+      }
+    } catch {}
+  }, []);
+
+  // Cache roads and landmarks on every update
+  useEffect(() => {
+    try {
+      localStorage.setItem(LOCAL_CACHE_KEY, JSON.stringify({ roads, landmarks }));
+    } catch {}
+  }, [roads, landmarks]);
+
   // Export handler (save map)
   const handleMapNameSubmit = async (name) => {
     setMapSaveLoading(true);
@@ -725,6 +941,8 @@ export default function Dashboard() {
         roads, // now contains {x, y, lat, lng} points
         landmarks, // now contains {x, y, lat, lng, ...}
         simRoute, // Save simulated route as part of map data
+        scale,
+        pan,
         // Add more state here if needed
       };
       const token = sessionStorage.getItem('token');
@@ -751,6 +969,8 @@ export default function Dashboard() {
           setShareUrl(url);
           try { await navigator.clipboard.writeText(url); } catch {}
         }
+        // Clear offline cache after export
+        try { localStorage.removeItem(LOCAL_CACHE_KEY); } catch {}
       } else {
         const data = await res.json();
         setMapError(data.message || 'Failed to save map');
@@ -779,8 +999,12 @@ export default function Dashboard() {
           }
           if (map.data.landmarks !== undefined) setLandmarks(map.data.landmarks);
           if (map.data.simRoute !== undefined) setSimRoute(map.data.simRoute);
+          if (map.data.scale !== undefined) setScale(map.data.scale);
+          if (map.data.pan !== undefined) setPan(map.data.pan);
         }
         setMapMessage(`Loaded map: ${map.name}`);
+        // Clear offline cache after loading a map
+        try { localStorage.removeItem(LOCAL_CACHE_KEY); } catch {}
       } else {
         setMapError('Failed to load map');
       }
@@ -830,17 +1054,21 @@ export default function Dashboard() {
     minLng -= padding;
     maxLng += padding;
     // Calculate scale so all points fit in the canvas
-    const latRange = Math.abs(maxLat - minLat);
-    const lngRange = Math.abs(maxLng - minLng);
-    const scaleX = stageSize.width / (lngRange || 1);
-    const scaleY = stageSize.height / (latRange || 1);
-    const scale = Math.min(scaleX, scaleY);
+    let latRange = Math.abs(maxLat - minLat);
+    let lngRange = Math.abs(maxLng - minLng);
+    // Avoid division by zero
+    if (latRange === 0) latRange = 1e-9;
+    if (lngRange === 0) lngRange = 1e-9;
+    const fitScaleX = stageSize.width / lngRange;
+    const fitScaleY = stageSize.height / latRange;
+    const dynamic = Math.min(fitScaleX, fitScaleY);
+    const effectiveScale = dynamic * scale; // Combine fit and user zoom
     // Centering
     const centerLat = (minLat + maxLat) / 2;
     const centerLng = (minLng + maxLng) / 2;
-    const x = stageSize.width / 2 + (lng - centerLng) * scale;
-    const y = stageSize.height / 2 - (lat - centerLat) * scale;
-    setDynamicScale(scale);
+    const x = stageSize.width / 2 + (lng - centerLng) * effectiveScale;
+    const y = stageSize.height / 2 - (lat - centerLat) * effectiveScale;
+    setDynamicScale(dynamic);
     return { x, y };
   }
 
@@ -893,209 +1121,204 @@ export default function Dashboard() {
 
   // Render
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(135deg, #e0e7ff 0%, #c7d2fe 100%)', overflowX: 'hidden' }}>
-      {/* Sidebar */}
-      <div className="sidebar">
-        {sidebarIcons.map((item, idx) => (
-          <div key={idx} className="sidebar-icon" title={item.label} tabIndex={0}>
-            {item.icon}
-          </div>
-        ))}
-      </div>
-      {/* User Profile (avatar + name) */}
-      <div className="user-profile">
-        <label htmlFor="avatar-upload" style={{ cursor: 'pointer', marginBottom: 0 }} title="Change profile picture">
-          {userInfo.avatar ? (
-            <img src={userInfo.avatar} alt="avatar" className="user-avatar" style={{ objectFit: 'cover' }} />
-          ) : (
-            <div className="user-avatar" title="Profile">{userInitial}</div>
-          )}
-          <input
-            id="avatar-upload"
-            type="file"
-            accept="image/*"
-            style={{ display: 'none' }}
-            onChange={handleAvatarChange}
-            disabled={uploading}
-          />
-        </label>
-        <span className="user-name">{userInfo.name || userInfo.email || 'User'}</span>
-      </div>
+    <div className="min-h-screen w-full bg-gradient-to-br from-[#15192b] via-[#101117] to-[#23243a] flex flex-col items-center font-sans">
+      {/* Top Navbar with Logo */}
+      <nav className="w-full flex items-center px-8 md:px-24 py-6 fixed top-0 left-0 z-30 bg-gradient-to-b from-[#181c2aee] to-transparent backdrop-blur-xl">
+        <div className="flex items-center gap-3">
+          <img src={logo} alt="Pathix Logo" className="h-12 w-12 drop-shadow-[0_0_16px_#f6d365]" />
+          <span className="text-3xl font-extrabold font-serif bg-gradient-to-r from-yellow-300 via-yellow-100 to-yellow-400 bg-clip-text text-transparent drop-shadow-[0_0_16px_#f6d365] tracking-wide">Pathix</span>
+        </div>
+      </nav>
+      <div className="h-20" />
       {/* Main Layout */}
-      <div className="main-layout" style={{ marginLeft: 90, paddingTop: 32, maxWidth: '100vw', overflowX: 'hidden' }}>
-        {/* Mini Stats Card */}
-        <div className="stats-card">
+      <div className="flex flex-col gap-8 max-w-6xl mx-auto pt-20 px-4 md:px-8 w-full">
+        {/* Mini Stats Card at the top */}
+        <div className="flex gap-8 bg-[#181c2a]/60 border border-accent-gold/60 rounded-3xl shadow-[0_0_12px_#f6d36544] py-6 px-8 mb-6 items-center justify-start max-w-md mx-auto animate-fadeInUp">
           {stats.map((stat, idx) => (
-            <div className="stat" key={idx}>
-              <div style={{ fontWeight: 700, fontSize: 20 }}>{stat.value}</div>
-              <div className="stat-label">{stat.label}</div>
+            <div className="flex flex-col items-center min-w-[80px]" key={idx}>
+              <div className="font-bold text-2xl text-accent-gold font-serif">{stat.value}</div>
+              <div className="text-gray-400 text-base mt-1 font-sans">{stat.label}</div>
             </div>
           ))}
         </div>
-        <div className="map-area glass-card">
-          <div className="toolbar">
-            {/* Hamburger menu for mobile */}
-            {isMobileScreen ? (
-              <>
-                <button
-                  className="hamburger-menu"
-                  aria-label="Open menu"
-                  onClick={() => setMobileMenuOpen(true)}
-                  style={{ fontSize: '2rem', background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', marginRight: 8 }}
-                >
-                  &#9776;
-                </button>
-                {/* Mobile menu modal/drawer */}
-                {mobileMenuOpen && (
-                  <div className="mobile-menu-bg" onClick={() => setMobileMenuOpen(false)}>
-                    <div className="mobile-menu" onClick={e => e.stopPropagation()}>
-                      <button onClick={() => { setTheme(theme === 'classic' ? 'night' : 'classic'); setMobileMenuOpen(false); }}>Switch Theme</button>
-                      <button onClick={() => { handleStartGPS(); setMobileMenuOpen(false); }} disabled={gpsTracking}>Start GPS Tracking</button>
-                      <button onClick={() => { handleStopGPS(); setMobileMenuOpen(false); }} disabled={!gpsTracking}>Stop GPS Tracking</button>
-                      <button onClick={() => { handleSimulateRoute(); setMobileMenuOpen(false); }} disabled={simulated}>Simulate Route</button>
-                      <button onClick={() => { handleExport(); setMobileMenuOpen(false); }}>Export Map</button>
-                      <button onClick={() => setMobileMenuOpen(false)} style={{ color: 'red' }}>Close</button>
+        {/* Map and Sidebar below stats */}
+        <div className="flex flex-col md:flex-row gap-8 w-full">
+          <div className="flex-1">
+            <div className="bg-[#181c2a]/60 border border-accent-gold/60 rounded-3xl shadow-[0_0_12px_#f6d36544] p-6 mb-8 animate-fadeInUp">
+              <div className="flex flex-wrap gap-3 mb-4 items-center bg-[#23243a]/60 border border-accent-gold/30 rounded-lg px-4 py-2 shadow-sm">
+                {/* Hamburger menu for mobile */}
+                {isMobileScreen ? (
+                  <>
+                    <button
+                      className="text-2xl bg-transparent border-none text-blue-600 dark:text-blue-400 cursor-pointer mr-2"
+                      aria-label="Open menu"
+                      onClick={() => setMobileMenuOpen(true)}
+                    >
+                      &#9776;
+                    </button>
+                    {/* Mobile menu modal/drawer */}
+                    {mobileMenuOpen && (
+                      <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-end" onClick={() => setMobileMenuOpen(false)}>
+                        <div className="bg-white dark:bg-neutral-800 w-full rounded-t-2xl p-6 shadow-lg animate-fadeInUp" onClick={e => e.stopPropagation()}>
+                          <button className="w-full py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" onClick={() => { setTheme(theme === 'classic' ? 'night' : 'classic'); setMobileMenuOpen(false); }}>Switch Theme</button>
+                          <button className="w-full py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" onClick={() => { handleStartGPS(); setMobileMenuOpen(false); }} disabled={gpsTracking}>Start GPS Tracking</button>
+                          <button className="w-full py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" onClick={() => { handleStopGPS(); setMobileMenuOpen(false); }} disabled={!gpsTracking}>Stop GPS Tracking</button>
+                          <button className="w-full py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" onClick={() => { handleSimulateRoute(); setMobileMenuOpen(false); }} disabled={simulated}>Simulate Route</button>
+                          <button className="w-full py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" onClick={() => { handleExport(); setMobileMenuOpen(false); }}>Export Map</button>
+                          <button className="w-full py-2 rounded-lg bg-red-500 text-white" onClick={() => setMobileMenuOpen(false)}>Close</button>
+                        </div>
+                      </div>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <label htmlFor="theme-select" className="text-sm text-gray-500 dark:text-gray-300 mr-2">Theme:</label>
+                    <select id="theme-select" value={theme} onChange={handleThemeChange} className="rounded-md border border-gray-300 dark:border-neutral-600 px-3 py-1 bg-white dark:bg-neutral-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-blue-400 mr-2">
+                      <option value="classic">Classic</option>
+                      <option value="night">Night</option>
+                    </select>
+                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105 hover:shadow-lg" id="start-gps" onClick={handleStartGPS} disabled={gpsTracking}>Start GPS Tracking</button>
+                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105 hover:shadow-lg" id="stop-gps" onClick={handleStopGPS} disabled={!gpsTracking}>Stop GPS Tracking</button>
+                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105 hover:shadow-lg" id="simulate-route" onClick={handleSimulateRoute} disabled={simulated}>Simulate Route</button>
+                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105 hover:shadow-lg" id="export-map" onClick={handleExport}>Export Map</button>
+                    <div id="gps-status" className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${gpsTracking ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'} ml-2`}>
+                      <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ background: gpsTracking ? '#22c55e' : '#aaa' }}></span>
+                      GPS Tracking: {gpsStatus}
+                    </div>
+                  </>
+                )}
+              </div>
+              <div className="relative w-full aspect-[16/10] rounded-2xl overflow-hidden shadow-[0_0_12px_#f6d36544] bg-[#23243a]/60 animate-fadeInUp border border-accent-gold/30">
+                <div
+                  id="container"
+                  ref={containerRef}
+                  className="absolute top-0 left-0 w-full h-full min-h-[400px]"
+                  onDrop={handleDrop}
+                  onDragOver={e => e.preventDefault()}
+                />
+                {/* Fixed zoom controls for desktop */}
+                <div className="hidden md:flex flex-col gap-2 absolute bottom-6 right-6 z-20">
+                  <button id="zoom-in-btn" onClick={handleZoomIn} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">+</button>
+                  <button id="zoom-out-btn" onClick={handleZoomOut} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">-</button>
+                </div>
+                {/* Mobile zoom controls */}
+                <div className="flex md:hidden flex-col gap-2 absolute bottom-4 right-4 z-20">
+                  <button id="zoom-in-btn-mobile" onClick={handleZoomIn} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">+</button>
+                  <button id="zoom-out-btn-mobile" onClick={handleZoomOut} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">-</button>
+                </div>
+                {exportMsg && <div className="absolute top-4 right-4 bg-[#181c2a]/80 text-accent-gold px-4 py-2 rounded-lg shadow-[0_0_12px_#f6d36544] border border-accent-gold/60">{exportMsg}</div>}
+                {/* Landmark label popup */}
+                {popup && (
+                  <div className="absolute left-0 top-0 bg-white text-neutral-900 rounded-lg shadow-lg p-4 z-30 min-w-[220px]" style={{ left: popup.x, top: popup.y }}>
+                    <div className="font-semibold mb-2">Edit Place Label</div>
+                    <input
+                      type="text"
+                      value={popup.label}
+                      onChange={e => setPopup(p => ({ ...p, label: e.target.value }))}
+                      className="w-full px-3 py-2 rounded border border-gray-300 focus:ring-2 focus:ring-blue-400 mb-2"
+                      placeholder="Enter name or description..."
+                      autoFocus
+                    />
+                    <div className="flex gap-2 mt-2">
+                      <button onClick={handlePopupSave} className="flex-1 bg-green-600 text-white rounded px-3 py-2 transition hover:bg-green-700">Save</button>
+                      <button onClick={() => setPopup(null)} className="flex-1 bg-gray-300 text-neutral-900 rounded px-3 py-2 transition hover:bg-gray-400">Cancel</button>
+                      <button onClick={handlePopupDelete} className="flex-1 bg-red-600 text-white rounded px-3 py-2 transition hover:bg-red-700">Delete</button>
                     </div>
                   </div>
                 )}
-              </>
-            ) : (
-              <>
-                <label htmlFor="theme-select">Theme:</label>
-                <select id="theme-select" value={theme} onChange={handleThemeChange}>
-                  <option value="classic">Classic</option>
-                  <option value="night">Night</option>
-                </select>
-                <button id="start-gps" onClick={handleStartGPS} disabled={gpsTracking}>Start GPS Tracking</button>
-                <button id="stop-gps" onClick={handleStopGPS} disabled={!gpsTracking}>Stop GPS Tracking</button>
-                <button id="simulate-route" onClick={handleSimulateRoute} disabled={simulated}>Simulate Route</button>
-                <button id="export-map" onClick={handleExport}>Export Map</button>
-                <div id="gps-status" className={`gps-status ${gpsTracking ? 'on' : 'off'}`}>
-                  <span className="dot"></span>
-                  GPS Tracking: {gpsStatus}
-                </div>
-              </>
-            )}
-          </div>
-          <div className="map-canvas-card" style={{position:'relative'}}>
-            <div
-              id="container"
-              ref={containerRef}
-              style={{ width: '100%', height: '100%', minHeight: 400, position: 'absolute', top: 0, left: 0 }}
-              onDrop={handleDrop}
-              onDragOver={e => e.preventDefault()}
-            />
-            {/* Fixed zoom controls for desktop */}
-            <div id="zoom-controls-fixed" style={{position:'fixed', bottom:24, right:24, zIndex:100, display: isMobileScreen ? 'none' : 'flex', flexDirection:'column', gap:10}}>
-              <button id="zoom-in-btn" onClick={handleZoomIn} style={{fontSize:'2rem', width:48, height:48, borderRadius:'50%', border:'none', background:'var(--primary)', color:'#fff', boxShadow:'0 2px 8px #23294633'}}>+</button>
-              <button id="zoom-out-btn" onClick={handleZoomOut} style={{fontSize:'2rem', width:48, height:48, borderRadius:'50%', border:'none', background:'var(--primary)', color:'#fff', boxShadow:'0 2px 8px #23294633'}}>-</button>
-            </div>
-            {/* Mobile zoom controls (absolute, inside map) */}
-            <div id="mobile-zoom-controls" style={{position:'absolute', bottom:16, right:16, zIndex:10, display: isMobileScreen ? 'flex' : 'none', flexDirection:'column', gap:10}}>
-              <button id="zoom-in-btn-mobile" onClick={handleZoomIn} style={{fontSize:'2rem', width:48, height:48, borderRadius:'50%', border:'none', background:'var(--primary)', color:'#fff', boxShadow:'0 2px 8px #23294633'}}>+</button>
-              <button id="zoom-out-btn-mobile" onClick={handleZoomOut} style={{fontSize:'2rem', width:48, height:48, borderRadius:'50%', border:'none', background:'var(--primary)', color:'#fff', boxShadow:'0 2px 8px #23294633'}}>-</button>
-            </div>
-            {exportMsg && <div style={{position:'absolute',top:10,right:10,background:'#232946',color:'#fff',padding:'8px 16px',borderRadius:8}}>{exportMsg}</div>}
-            {/* Landmark label popup */}
-            {popup && (
-              <div style={{position:'absolute', left:popup.x, top:popup.y, background:'#fff', color:'#232946', borderRadius:8, boxShadow:'0 2px 8px #23294633', padding:16, zIndex:1000, minWidth:220}}>
-                <div style={{fontWeight:600, marginBottom:8}}>Edit Place Label</div>
-                <input
-                  type="text"
-                  value={popup.label}
-                  onChange={e => setPopup(p => ({ ...p, label: e.target.value }))}
-                  style={{width:'100%',padding:8,marginBottom:8,borderRadius:4,border:'1px solid #ccc'}}
-                  placeholder="Enter name or description..."
-                  autoFocus
-                />
-                <div style={{display:'flex',gap:8,marginTop:8}}>
-                  <button onClick={handlePopupSave} style={{flex:1,background:'#43a047',color:'#fff',border:'none',borderRadius:4,padding:8}}>Save</button>
-                  <button onClick={()=>setPopup(null)} style={{flex:1,background:'#ccc',color:'#232946',border:'none',borderRadius:4,padding:8}}>Cancel</button>
-                  <button onClick={handlePopupDelete} style={{flex:1,background:'#e53935',color:'#fff',border:'none',borderRadius:4,padding:8}}>Delete</button>
-                </div>
               </div>
-            )}
+            </div>
           </div>
-        </div>
-        <aside className="asset-panel glass-card">
-          <div className="asset-title">Assets</div>
-          <div className="asset-list" id="landmark-palette">
-            {landmarkIcons.map(lm => (
-              <div
-                className="asset-item"
-                key={lm.type}
-                draggable
-                onDragStart={() => handleDragStart(lm.type)}
-                onDragEnd={handleDragEnd}
-                tabIndex={0}
-                data-type={lm.type}
-                style={{display:'flex',alignItems:'center',gap:8,padding:'8px 0',cursor:'grab'}}
-              >
-                <span className="asset-icon" style={{fontSize:'1.5em'}}>{lm.icon}</span>
-                <span>{lm.label}</span>
-              </div>
-            ))}
-          </div>
-          <div className="asset-upload">
-            <button className="upload-btn">Upload</button>
-            <span style={{color:'var(--text-muted)', fontSize:'0.98em'}}>(Coming soon)</span>
-          </div>
-          <div className="my-maps-list">
-            <h4>My Maps</h4>
-            {mapsLoading ? <div>Loading...</div> : null}
-            {mapError && <div className="auth-error">{mapError}</div>}
-            <ul style={{ listStyle: 'none', padding: 0 }}>
-              {maps.map(m => (
-                <li key={m._id} style={{ marginBottom: 12 }}>
-                  <span style={{ fontWeight: 500 }}>{m.name}</span>
-                  <button onClick={() => handleLoadMap(m._id)} style={{ marginLeft: 8 }}>Load</button>
-                  <button onClick={() => handleDeleteMap(m._id)} style={{ marginLeft: 4, color: 'red' }}>Delete</button>
-                  <div style={{ fontSize: '0.95em', marginTop: 4, color: 'var(--text-muted)' }}>
-                    <span>URL: </span>
-                    <input
-                      value={`${window.location.origin}/map/${m._id}`}
-                      readOnly
-                      style={{ width: '70%', fontSize: '0.95em', padding: '2px 6px', borderRadius: 4, border: '1px solid #ccc', marginRight: 4 }}
-                    />
-                    <button
-                      style={{ fontSize: '0.95em', padding: '2px 8px', borderRadius: 4, border: 'none', background: 'var(--primary)', color: '#fff', cursor: 'pointer' }}
-                      onClick={() => navigator.clipboard.writeText(`${window.location.origin}/map/${m._id}`)}
-                    >Copy</button>
-                  </div>
-                </li>
+          <aside className="bg-[#181c2a]/60 border border-accent-gold/60 rounded-3xl shadow-[0_0_12px_#f6d36544] p-6 min-w-[260px] max-w-xs flex flex-col gap-6 animate-fadeInUp">
+            <div className="text-lg font-bold text-accent-gold mb-2 font-serif">Assets</div>
+            <div className="grid gap-3 mb-4 max-h-72 overflow-y-auto" id="landmark-palette">
+              {landmarkIcons.map(lm => (
+                <div
+                  key={lm.type}
+                  draggable={!isMobile()}
+                  onDragStart={!isMobile() ? () => handleDragStart(lm.type) : undefined}
+                  onDragEnd={!isMobile() ? handleDragEnd : undefined}
+                  tabIndex={0}
+                  data-type={lm.type}
+                  className={`asset-item flex items-center gap-3 bg-[#23243a]/60 border border-accent-gold/30 rounded-lg px-4 py-2 text-base text-gray-200 cursor-grab hover:bg-gradient-to-r hover:from-accent-gold hover:to-yellow-400 hover:text-gray-900 transition animate-fadeInUp ${isMobile() ? 'cursor-pointer' : ''}`}
+                  onClick={isMobile() ? () => setSelectedAssetType(lm.type) : undefined}
+                >
+                  <span className="text-xl">{lm.icon}</span>
+                  <span>{lm.label}</span>
+                </div>
               ))}
-            </ul>
-            {mapMessage && <div className="auth-success">{mapMessage}</div>}
-          </div>
-        </aside>
+            </div>
+            <div className="flex items-center gap-2">
+              <button className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded px-4 py-2 font-semibold shadow-glow hover:scale-105 transition">Upload</button>
+              <span className="text-gray-400 text-sm">(Coming soon)</span>
+            </div>
+            <div>
+              <h4 className="font-semibold text-base mb-2 text-accent-gold font-serif">My Maps</h4>
+              {mapsLoading ? <div>Loading...</div> : null}
+              {mapError && <div className="text-red-500 text-sm mb-2">{mapError}</div>}
+              <ul className="list-none p-0">
+                {maps.map(m => (
+                  <li key={m._id} className="mb-3">
+                    <span className="font-medium">{m.name}</span>
+                    <button onClick={() => handleLoadMap(m._id)} className="ml-2 px-2 py-1 rounded bg-blue-600 text-white text-xs transition hover:bg-blue-700">Load</button>
+                    <button onClick={() => handleDeleteMap(m._id)} className="ml-1 px-2 py-1 rounded bg-red-600 text-white text-xs transition hover:bg-red-700">Delete</button>
+                    <div className="text-xs mt-1 text-gray-400">
+                      <span>URL: </span>
+                      <input
+                        value={`${window.location.origin}/map/${m._id}`}
+                        readOnly
+                        className="w-3/4 text-xs px-2 py-1 rounded border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 mr-1"
+                      />
+                      <button
+                        className="text-xs px-2 py-1 rounded bg-blue-500 text-white hover:bg-blue-600 transition"
+                        onClick={() => navigator.clipboard.writeText(`${window.location.origin}/map/${m._id}`)}
+                      >Copy</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+              {mapMessage && <div className="text-green-600 text-sm mt-2">{mapMessage}</div>}
+            </div>
+          </aside>
+        </div>
         {/* Floating Action Button (FAB) */}
-        <button className="fab" onClick={() => setFabOpen(fab => !fab)} title="Quick Actions">
+        <button
+          className="fixed bottom-10 right-10 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-12 h-12 text-xl p-0 flex items-center justify-center shadow-glow hover:scale-110 transition z-50"
+          onClick={() => setFabOpen(fab => !fab)}
+          title="Quick Actions"
+        >
           +
         </button>
         {fabOpen && (
-          <div className="fab-menu">
+          <div className="fixed bottom-32 right-10 bg-[#181c2a]/90 border border-accent-gold/60 rounded-2xl shadow-[0_0_12px_#f6d36544] p-4 flex flex-col gap-2 z-50 animate-fadeInUp">
             {fabActions.map((action, idx) => (
-              <button key={idx} onClick={() => { action.onClick(); setFabOpen(false); }}>
-                <span style={{ marginRight: 10 }}>{action.icon}</span> {action.label}
+              <button key={idx} onClick={() => { action.onClick(); setFabOpen(false); }} className="flex items-center gap-2 px-4 py-2 rounded hover:bg-gradient-to-r hover:from-accent-gold hover:to-yellow-400 hover:text-gray-900 transition">
+                <span className="mr-2">{action.icon}</span> {action.label}
               </button>
             ))}
           </div>
         )}
       </div>
       <MapNameModal open={showMapNameModal} onClose={() => setShowMapNameModal(false)} onSubmit={handleMapNameSubmit} loading={mapSaveLoading} />
-      <footer style={{textAlign:'center', color:'var(--text-muted)', fontSize:'0.98em', marginBottom:18, marginTop:10}}>
-        &copy; 2024 Pathix &mdash; Crafted with <span style={{color:'var(--accent)'}}>&#10084;&#65039;</span>
+      <footer className="text-center text-accent-gold text-sm my-6 font-serif">
+        &copy; 2025 Pathix &mdash; Crafted with <span className="text-yellow-400">&#10084;&#65039;</span>
       </footer>
-      {geoError && <div style={{color:'#e53935',textAlign:'center',margin:'8px 0',fontWeight:600}}>{geoError}</div>}
+      {geoError && <div className="text-red-600 text-center my-2 font-semibold">{geoError}</div>}
+      {gpsSignalLost && (
+        <div className="text-yellow-400 text-center my-2 font-semibold">
+          GPS Signal Lost. Please try moving to an open area or allow location access.
+          <button onClick={() => handleStartGPS(true)} className="ml-2 px-3 py-1 rounded bg-blue-600 text-white text-xs transition hover:bg-blue-700">Retry</button>
+        </div>
+      )}
       {shareUrl && (
-        <div className="modal-bg">
-          <div className="modal-card">
-            <h3>Map Saved!</h3>
-            <div style={{marginBottom:12}}>Share or bookmark this map:</div>
-            <input value={shareUrl} readOnly style={{width:'100%',padding:8,marginBottom:8}} />
-            <button onClick={()=>window.open(shareUrl, '_blank')}>Open Map Page</button>
-            <button onClick={()=>setShareUrl('')} style={{marginLeft:8}}>Close</button>
-            <div style={{marginTop:8, color:'var(--text-muted)', fontSize:'0.95em'}}>URL copied to clipboard</div>
+        <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-center justify-center">
+          <div className="bg-[#181c2a]/90 border border-accent-gold/60 rounded-2xl shadow-[0_0_12px_#f6d36544] p-8 animate-fadeInUp">
+            <h3 className="text-lg font-bold mb-2 text-accent-gold font-serif">Map Saved!</h3>
+            <div className="mb-3 text-gray-200">Share or bookmark this map:</div>
+            <input value={shareUrl} readOnly className="w-full px-3 py-2 rounded border border-accent-gold/30 bg-[#23243a]/60 text-gray-100 mb-2" />
+            <button onClick={()=>window.open(shareUrl, '_blank')} className="w-full py-2 rounded bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105">Open Map Page</button>
+            <button onClick={()=>setShareUrl('')} className="w-full py-2 rounded bg-gray-300 text-neutral-900 transition hover:bg-gray-400">Close</button>
+            <div className="mt-2 text-accent-gold text-xs">URL copied to clipboard</div>
           </div>
         </div>
       )}

@@ -6,7 +6,7 @@ import CTASection from './CTASection';
 
 const HomePage = () => {
   return (
-    <div style={{ minHeight: '100vh', background: 'linear-gradient(to bottom right, #f0f4ff, #e0e7ff 80%)' }}>
+    <div className="min-h-screen bg-gradient-to-br from-[#181c2a] via-[#232946] to-[#232946] flex flex-col items-center justify-center">
       <HeroSection />
       <FeaturesSection />
       <TargetCustomersSection />
