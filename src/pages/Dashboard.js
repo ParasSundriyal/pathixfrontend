@@ -1204,9 +1204,9 @@ export default function Dashboard() {
                   <button id="zoom-out-btn" onClick={handleZoomOut} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">-</button>
                 </div>
                 {/* Mobile zoom controls */}
-                <div className="flex md:hidden flex-col gap-2 absolute bottom-2 sm:bottom-4 right-2 sm:right-4 z-20">
-                  <button id="zoom-in-btn-mobile" onClick={handleZoomIn} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">+</button>
-                  <button id="zoom-out-btn-mobile" onClick={handleZoomOut} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">-</button>
+                <div className="flex md:hidden flex-col gap-2 absolute bottom-4 right-4 z-20">
+                  <button id="zoom-in-btn-mobile" onClick={handleZoomIn} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-10 h-10 text-xl shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">+</button>
+                  <button id="zoom-out-btn-mobile" onClick={handleZoomOut} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-10 h-10 text-xl shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">-</button>
                 </div>
                 {exportMsg && <div className="absolute top-2 sm:top-4 right-2 sm:right-4 bg-[#181c2a]/80 text-accent-gold px-2 sm:px-4 py-1 sm:py-2 rounded-lg shadow-[0_0_12px_#f6d36544] border border-accent-gold/60 text-xs sm:text-base">{exportMsg}</div>}
                 {/* Landmark label popup */}
@@ -1289,80 +1289,33 @@ export default function Dashboard() {
             <div className="fixed inset-0 z-50 flex items-end md:hidden" style={{background:'rgba(0,0,0,0.5)'}} onClick={() => setMobileMenuOpen(false)}>
               <div className="bg-[#181c2a] w-full max-h-[90vh] rounded-t-2xl p-4 flex flex-col gap-4 overflow-y-auto animate-fadeInUp border-t border-accent-gold/60" onClick={e => e.stopPropagation()}>
                 <button className="self-end text-2xl text-accent-gold mb-2" aria-label="Close sidebar" onClick={() => setMobileMenuOpen(false)}>&times;</button>
-                {/* Tab Switcher */}
-                <div className="flex gap-2 mb-4">
-                  <button
-                    className={`flex-1 py-2 rounded-lg font-semibold transition text-sm ${mobileSidebarTab === 'assets' ? 'bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 shadow-glow' : 'bg-[#23243a] text-accent-gold border border-accent-gold/60'}`}
-                    onClick={() => setMobileSidebarTab('assets')}
-                  >
-                    Assets
-                  </button>
-                  <button
-                    className={`flex-1 py-2 rounded-lg font-semibold transition text-sm ${mobileSidebarTab === 'maps' ? 'bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 shadow-glow' : 'bg-[#23243a] text-accent-gold border border-accent-gold/60'}`}
-                    onClick={() => setMobileSidebarTab('maps')}
-                  >
-                    My Maps
-                  </button>
-                </div>
-                {/* Assets Tab */}
-                {mobileSidebarTab === 'assets' && (
-                  <>
-                    <div className="text-base font-bold text-accent-gold mb-1 font-serif">Assets</div>
-                    <div className="grid gap-2 mb-2 max-h-40 overflow-y-auto" id="landmark-palette">
-                      {landmarkIcons.map(lm => (
-                        <div
-                          key={lm.type}
-                          draggable={!isMobile()}
-                          onDragStart={!isMobile() ? () => handleDragStart(lm.type) : undefined}
-                          onDragEnd={!isMobile() ? handleDragEnd : undefined}
-                          tabIndex={0}
-                          data-type={lm.type}
-                          className={`asset-item flex items-center gap-2 bg-[#23243a]/60 border border-accent-gold/30 rounded-lg px-2 py-1 text-sm text-gray-200 cursor-grab hover:bg-gradient-to-r hover:from-accent-gold hover:to-yellow-400 hover:text-gray-900 transition animate-fadeInUp ${isMobile() ? 'cursor-pointer' : ''}`}
-                          onClick={isMobile() ? () => setSelectedAssetType(lm.type) : undefined}
-                        >
-                          <span className="text-lg">{lm.icon}</span>
-                          <span>{lm.label}</span>
+                <div>
+                  <h4 className="font-semibold text-sm mb-1 text-accent-gold font-serif">My Maps</h4>
+                  {mapsLoading ? <div>Loading...</div> : null}
+                  {mapError && <div className="text-red-500 text-xs mb-2">{mapError}</div>}
+                  <ul className="list-none p-0">
+                    {maps.map(m => (
+                      <li key={m._id} className="mb-2">
+                        <span className="font-medium text-xs">{m.name}</span>
+                        <button onClick={() => handleLoadMap(m._id)} className="ml-2 px-2 py-1 rounded bg-blue-600 text-white text-xs transition hover:bg-blue-700">Load</button>
+                        <button onClick={() => handleDeleteMap(m._id)} className="ml-1 px-2 py-1 rounded bg-red-600 text-white text-xs transition hover:bg-red-700">Delete</button>
+                        <div className="text-xs mt-1 text-gray-400">
+                          <span>URL: </span>
+                          <input
+                            value={`${window.location.origin}/map/${m._id}`}
+                            readOnly
+                            className="w-3/4 text-xs px-2 py-1 rounded border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 mr-1"
+                          />
+                          <button
+                            className="text-xs px-2 py-1 rounded bg-blue-500 text-white hover:bg-blue-600 transition"
+                            onClick={() => navigator.clipboard.writeText(`${window.location.origin}/map/${m._id}`)}
+                          >Copy</button>
                         </div>
-                      ))}
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <button className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded px-3 py-1 font-semibold shadow-glow hover:scale-105 transition text-xs">Upload</button>
-                      <span className="text-gray-400 text-xs">(Coming soon)</span>
-                    </div>
-                  </>
-                )}
-                {/* My Maps Tab */}
-                {mobileSidebarTab === 'maps' && (
-                  <>
-                    <div>
-                      <h4 className="font-semibold text-sm mb-1 text-accent-gold font-serif">My Maps</h4>
-                      {mapsLoading ? <div>Loading...</div> : null}
-                      {mapError && <div className="text-red-500 text-xs mb-2">{mapError}</div>}
-                      <ul className="list-none p-0">
-                        {maps.map(m => (
-                          <li key={m._id} className="mb-2">
-                            <span className="font-medium text-xs">{m.name}</span>
-                            <button onClick={() => handleLoadMap(m._id)} className="ml-2 px-2 py-1 rounded bg-blue-600 text-white text-xs transition hover:bg-blue-700">Load</button>
-                            <button onClick={() => handleDeleteMap(m._id)} className="ml-1 px-2 py-1 rounded bg-red-600 text-white text-xs transition hover:bg-red-700">Delete</button>
-                            <div className="text-xs mt-1 text-gray-400">
-                              <span>URL: </span>
-                              <input
-                                value={`${window.location.origin}/map/${m._id}`}
-                                readOnly
-                                className="w-3/4 text-xs px-2 py-1 rounded border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 mr-1"
-                              />
-                              <button
-                                className="text-xs px-2 py-1 rounded bg-blue-500 text-white hover:bg-blue-600 transition"
-                                onClick={() => navigator.clipboard.writeText(`${window.location.origin}/map/${m._id}`)}
-                              >Copy</button>
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
-                      {mapMessage && <div className="text-green-600 text-xs mt-2">{mapMessage}</div>}
-                    </div>
-                  </>
-                )}
+                      </li>
+                    ))}
+                  </ul>
+                  {mapMessage && <div className="text-green-600 text-xs mt-2">{mapMessage}</div>}
+                </div>
               </div>
             </div>
           )}
