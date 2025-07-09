@@ -1137,7 +1137,7 @@ export default function Dashboard() {
       {/* Main Layout */}
       <div className="flex flex-col gap-8 max-w-6xl mx-auto pt-20 px-2 sm:px-4 md:px-8 w-full">
         {/* Mini Stats Card at the top */}
-        <div className="flex gap-4 sm:gap-8 bg-[#181c2a]/60 border border-accent-gold/60 rounded-2xl sm:rounded-3xl shadow-[0_0_12px_#f6d36544] py-4 sm:py-6 px-4 sm:px-8 mb-4 sm:mb-6 items-center justify-start max-w-xs sm:max-w-md mx-auto animate-fadeInUp text-sm sm:text-base">
+        <div className="hidden sm:flex gap-4 sm:gap-8 bg-[#181c2a]/60 border border-accent-gold/60 rounded-2xl sm:rounded-3xl shadow-[0_0_12px_#f6d36544] py-4 sm:py-6 px-4 sm:px-8 mb-4 sm:mb-6 items-center justify-start max-w-xs sm:max-w-md mx-auto animate-fadeInUp text-sm sm:text-base">
           {stats.map((stat, idx) => (
             <div className="flex flex-col items-center min-w-[60px] sm:min-w-[80px]" key={idx}>
               <div className="font-bold text-lg sm:text-2xl text-accent-gold font-serif">{stat.value}</div>
@@ -1187,6 +1187,16 @@ export default function Dashboard() {
                   className="absolute top-0 left-0 w-full h-full min-h-[70vh] sm:min-h-[400px]"
                   onDrop={handleDrop}
                   onDragOver={e => e.preventDefault()}
+                  onClick={e => {
+                    if (isMobileScreen) {
+                      // Get click coordinates relative to container
+                      const rect = containerRef.current.getBoundingClientRect();
+                      const x = e.clientX - rect.left;
+                      const y = e.clientY - rect.top;
+                      setPendingAssetCoords({ x, y });
+                      setShowAssetPicker(true);
+                    }
+                  }}
                 />
                 {/* Fixed zoom controls for desktop */}
                 <div className="hidden md:flex flex-col gap-2 absolute bottom-4 sm:bottom-6 right-4 sm:right-6 z-20">
