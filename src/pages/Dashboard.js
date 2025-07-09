@@ -148,6 +148,10 @@ export default function Dashboard() {
   const [shareUrl, setShareUrl] = useState('');
   const [bounds, setBounds] = useState({ minLat: null, maxLat: null, minLng: null, maxLng: null });
   const [dynamicScale, setDynamicScale] = useState(DEFAULT_SCALE);
+  const [mobileSidebarTab, setMobileSidebarTab] = useState('assets'); // 'assets' or 'maps'
+  // Add state for mobile asset picker
+  const [showAssetPicker, setShowAssetPicker] = useState(false);
+  const [pendingAssetCoords, setPendingAssetCoords] = useState(null);
 
   // User info state
   const [userInfo, setUserInfo] = useState({ name: '', avatar: '', email: '' });
@@ -1131,56 +1135,44 @@ export default function Dashboard() {
       </nav>
       <div className="h-20" />
       {/* Main Layout */}
-      <div className="flex flex-col gap-8 max-w-6xl mx-auto pt-20 px-4 md:px-8 w-full">
+      <div className="flex flex-col gap-8 max-w-6xl mx-auto pt-20 px-2 sm:px-4 md:px-8 w-full">
         {/* Mini Stats Card at the top */}
-        <div className="flex gap-8 bg-[#181c2a]/60 border border-accent-gold/60 rounded-3xl shadow-[0_0_12px_#f6d36544] py-6 px-8 mb-6 items-center justify-start max-w-md mx-auto animate-fadeInUp">
+        <div className="hidden sm:flex gap-4 sm:gap-8 bg-[#181c2a]/60 border border-accent-gold/60 rounded-2xl sm:rounded-3xl shadow-[0_0_12px_#f6d36544] py-4 sm:py-6 px-4 sm:px-8 mb-4 sm:mb-6 items-center justify-start max-w-xs sm:max-w-md mx-auto animate-fadeInUp text-sm sm:text-base">
           {stats.map((stat, idx) => (
-            <div className="flex flex-col items-center min-w-[80px]" key={idx}>
-              <div className="font-bold text-2xl text-accent-gold font-serif">{stat.value}</div>
-              <div className="text-gray-400 text-base mt-1 font-sans">{stat.label}</div>
+            <div className="flex flex-col items-center min-w-[60px] sm:min-w-[80px]" key={idx}>
+              <div className="font-bold text-lg sm:text-2xl text-accent-gold font-serif">{stat.value}</div>
+              <div className="text-gray-400 text-xs sm:text-base mt-1 font-sans">{stat.label}</div>
             </div>
           ))}
         </div>
         {/* Map and Sidebar below stats */}
-        <div className="flex flex-col md:flex-row gap-8 w-full">
-          <div className="flex-1">
-            <div className="bg-[#181c2a]/60 border border-accent-gold/60 rounded-3xl shadow-[0_0_12px_#f6d36544] p-6 mb-8 animate-fadeInUp">
-              <div className="flex flex-wrap gap-3 mb-4 items-center bg-[#23243a]/60 border border-accent-gold/30 rounded-lg px-4 py-2 shadow-sm">
-                {/* Hamburger menu for mobile */}
-                {isMobileScreen ? (
-                  <>
-                    <button
-                      className="text-2xl bg-transparent border-none text-blue-600 dark:text-blue-400 cursor-pointer mr-2"
-                      aria-label="Open menu"
-                      onClick={() => setMobileMenuOpen(true)}
-                    >
-                      &#9776;
-                    </button>
-                    {/* Mobile menu modal/drawer */}
-                    {mobileMenuOpen && (
-                      <div className="fixed inset-0 bg-black bg-opacity-40 z-50 flex items-end" onClick={() => setMobileMenuOpen(false)}>
-                        <div className="bg-white dark:bg-neutral-800 w-full rounded-t-2xl p-6 shadow-lg animate-fadeInUp" onClick={e => e.stopPropagation()}>
-                          <button className="w-full py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" onClick={() => { setTheme(theme === 'classic' ? 'night' : 'classic'); setMobileMenuOpen(false); }}>Switch Theme</button>
-                          <button className="w-full py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" onClick={() => { handleStartGPS(); setMobileMenuOpen(false); }} disabled={gpsTracking}>Start GPS Tracking</button>
-                          <button className="w-full py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" onClick={() => { handleStopGPS(); setMobileMenuOpen(false); }} disabled={!gpsTracking}>Stop GPS Tracking</button>
-                          <button className="w-full py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" onClick={() => { handleSimulateRoute(); setMobileMenuOpen(false); }} disabled={simulated}>Simulate Route</button>
-                          <button className="w-full py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" onClick={() => { handleExport(); setMobileMenuOpen(false); }}>Export Map</button>
-                          <button className="w-full py-2 rounded-lg bg-red-500 text-white" onClick={() => setMobileMenuOpen(false)}>Close</button>
-                        </div>
-                      </div>
-                    )}
-                  </>
-                ) : (
+        <div className="flex flex-col md:flex-row gap-4 sm:gap-8 w-full relative">
+          {/* Hamburger for mobile */}
+          {isMobileScreen && (
+            <button
+              className="fixed top-24 left-4 z-40 bg-[#181c2a]/80 border border-accent-gold/60 rounded-full w-12 h-12 flex items-center justify-center shadow-glow text-2xl text-accent-gold md:hidden"
+              aria-label="Open sidebar"
+              onClick={() => setMobileMenuOpen(true)}
+            >
+              &#9776;
+            </button>
+          )}
+          {/* Map Area */}
+          <div className="flex-1 min-w-0">
+            <div className="bg-[#181c2a]/60 border border-accent-gold/60 rounded-2xl sm:rounded-3xl shadow-[0_0_12px_#f6d36544] p-3 sm:p-6 mb-4 sm:mb-8 animate-fadeInUp relative">
+              <div className="flex flex-wrap gap-2 sm:gap-3 mb-2 sm:mb-4 items-center bg-[#23243a]/60 border border-accent-gold/30 rounded-lg px-2 sm:px-4 py-1 sm:py-2 shadow-sm md:flex">
+                {/* Desktop toolbar only */}
+                {!isMobileScreen && (
                   <>
                     <label htmlFor="theme-select" className="text-sm text-gray-500 dark:text-gray-300 mr-2">Theme:</label>
                     <select id="theme-select" value={theme} onChange={handleThemeChange} className="rounded-md border border-gray-300 dark:border-neutral-600 px-3 py-1 bg-white dark:bg-neutral-700 text-gray-800 dark:text-gray-100 focus:ring-2 focus:ring-blue-400 mr-2">
                       <option value="classic">Classic</option>
                       <option value="night">Night</option>
                     </select>
-                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105 hover:shadow-lg" id="start-gps" onClick={handleStartGPS} disabled={gpsTracking}>Start GPS Tracking</button>
-                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105 hover:shadow-lg" id="stop-gps" onClick={handleStopGPS} disabled={!gpsTracking}>Stop GPS Tracking</button>
-                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105 hover:shadow-lg" id="simulate-route" onClick={handleSimulateRoute} disabled={simulated}>Simulate Route</button>
-                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105 hover:shadow-lg" id="export-map" onClick={handleExport}>Export Map</button>
+                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" id="start-gps" onClick={handleStartGPS} disabled={gpsTracking}>Start GPS Tracking</button>
+                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" id="stop-gps" onClick={handleStopGPS} disabled={!gpsTracking}>Stop GPS Tracking</button>
+                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" id="simulate-route" onClick={handleSimulateRoute} disabled={simulated}>Simulate Route</button>
+                    <button className="rounded-md px-3 py-1 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-semibold shadow-glow transition mr-2 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105" id="export-map" onClick={handleExport}>Export Map</button>
                     <div id="gps-status" className={`flex items-center gap-2 px-3 py-1 rounded-full text-xs font-medium ${gpsTracking ? 'bg-green-100 text-green-700' : 'bg-gray-200 text-gray-500'} ml-2`}>
                       <span className="inline-block w-2 h-2 rounded-full mr-1" style={{ background: gpsTracking ? '#22c55e' : '#aaa' }}></span>
                       GPS Tracking: {gpsStatus}
@@ -1188,50 +1180,62 @@ export default function Dashboard() {
                   </>
                 )}
               </div>
-              <div className="relative w-full aspect-[16/10] rounded-2xl overflow-hidden shadow-[0_0_12px_#f6d36544] bg-[#23243a]/60 animate-fadeInUp border border-accent-gold/30">
+              <div className="relative w-full aspect-[16/10] rounded-xl sm:rounded-2xl overflow-hidden shadow-[0_0_12px_#f6d36544] bg-[#23243a]/60 animate-fadeInUp border border-accent-gold/30">
                 <div
                   id="container"
                   ref={containerRef}
-                  className="absolute top-0 left-0 w-full h-full min-h-[400px]"
+                  className="absolute top-0 left-0 w-full h-full min-h-[70vh] sm:min-h-[400px]"
                   onDrop={handleDrop}
                   onDragOver={e => e.preventDefault()}
+                  onClick={e => {
+                    if (isMobileScreen) {
+                      // Get click coordinates relative to container
+                      const rect = containerRef.current.getBoundingClientRect();
+                      const x = e.clientX - rect.left;
+                      const y = e.clientY - rect.top;
+                      setPendingAssetCoords({ x, y });
+                      setShowAssetPicker(true);
+                    }
+                  }}
                 />
                 {/* Fixed zoom controls for desktop */}
-                <div className="hidden md:flex flex-col gap-2 absolute bottom-6 right-6 z-20">
+                <div className="hidden md:flex flex-col gap-2 absolute bottom-4 sm:bottom-6 right-4 sm:right-6 z-20">
                   <button id="zoom-in-btn" onClick={handleZoomIn} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">+</button>
                   <button id="zoom-out-btn" onClick={handleZoomOut} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">-</button>
                 </div>
                 {/* Mobile zoom controls */}
-                <div className="flex md:hidden flex-col gap-2 absolute bottom-4 right-4 z-20">
+                <div className="flex md:hidden flex-col gap-2 absolute bottom-2 sm:bottom-4 right-2 sm:right-4 z-20">
                   <button id="zoom-in-btn-mobile" onClick={handleZoomIn} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">+</button>
                   <button id="zoom-out-btn-mobile" onClick={handleZoomOut} className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-8 h-8 text-lg shadow-glow transition flex items-center justify-center p-0 hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-110 hover:shadow-lg">-</button>
                 </div>
-                {exportMsg && <div className="absolute top-4 right-4 bg-[#181c2a]/80 text-accent-gold px-4 py-2 rounded-lg shadow-[0_0_12px_#f6d36544] border border-accent-gold/60">{exportMsg}</div>}
+                {exportMsg && <div className="absolute top-2 sm:top-4 right-2 sm:right-4 bg-[#181c2a]/80 text-accent-gold px-2 sm:px-4 py-1 sm:py-2 rounded-lg shadow-[0_0_12px_#f6d36544] border border-accent-gold/60 text-xs sm:text-base">{exportMsg}</div>}
                 {/* Landmark label popup */}
                 {popup && (
-                  <div className="absolute left-0 top-0 bg-white text-neutral-900 rounded-lg shadow-lg p-4 z-30 min-w-[220px]" style={{ left: popup.x, top: popup.y }}>
+                  <div className="absolute left-0 top-0 bg-white text-neutral-900 rounded-lg shadow-lg p-2 sm:p-4 z-30 min-w-[160px] sm:min-w-[220px]" style={{ left: popup.x, top: popup.y }}>
                     <div className="font-semibold mb-2">Edit Place Label</div>
                     <input
                       type="text"
                       value={popup.label}
                       onChange={e => setPopup(p => ({ ...p, label: e.target.value }))}
-                      className="w-full px-3 py-2 rounded border border-gray-300 focus:ring-2 focus:ring-blue-400 mb-2"
+                      className="w-full px-2 sm:px-3 py-1 sm:py-2 rounded border border-gray-300 focus:ring-2 focus:ring-blue-400 mb-2"
                       placeholder="Enter name or description..."
                       autoFocus
                     />
                     <div className="flex gap-2 mt-2">
-                      <button onClick={handlePopupSave} className="flex-1 bg-green-600 text-white rounded px-3 py-2 transition hover:bg-green-700">Save</button>
-                      <button onClick={() => setPopup(null)} className="flex-1 bg-gray-300 text-neutral-900 rounded px-3 py-2 transition hover:bg-gray-400">Cancel</button>
-                      <button onClick={handlePopupDelete} className="flex-1 bg-red-600 text-white rounded px-3 py-2 transition hover:bg-red-700">Delete</button>
+                      <button onClick={handlePopupSave} className="flex-1 bg-green-600 text-white rounded px-2 sm:px-3 py-1 sm:py-2 transition hover:bg-green-700">Save</button>
+                      <button onClick={() => setPopup(null)} className="flex-1 bg-gray-300 text-neutral-900 rounded px-2 sm:px-3 py-1 sm:py-2 transition hover:bg-gray-400">Cancel</button>
+                      <button onClick={handlePopupDelete} className="flex-1 bg-red-600 text-white rounded px-2 sm:px-3 py-1 sm:py-2 transition hover:bg-red-700">Delete</button>
                     </div>
                   </div>
                 )}
               </div>
             </div>
           </div>
-          <aside className="bg-[#181c2a]/60 border border-accent-gold/60 rounded-3xl shadow-[0_0_12px_#f6d36544] p-6 min-w-[260px] max-w-xs flex flex-col gap-6 animate-fadeInUp">
-            <div className="text-lg font-bold text-accent-gold mb-2 font-serif">Assets</div>
-            <div className="grid gap-3 mb-4 max-h-72 overflow-y-auto" id="landmark-palette">
+          {/* Sidebar: modal/drawer on mobile, visible on desktop */}
+          {/* Desktop sidebar */}
+          <aside className="hidden md:flex bg-[#181c2a]/60 border border-accent-gold/60 rounded-2xl sm:rounded-3xl shadow-[0_0_12px_#f6d36544] p-3 sm:p-6 min-w-0 w-full md:w-[320px] max-w-full md:max-w-xs flex-col gap-4 sm:gap-6 animate-fadeInUp order-2 md:order-none">
+            <div className="text-base sm:text-lg font-bold text-accent-gold mb-1 sm:mb-2 font-serif">Assets</div>
+            <div className="grid gap-2 sm:gap-3 mb-2 sm:mb-4 max-h-40 sm:max-h-72 overflow-y-auto" id="landmark-palette">
               {landmarkIcons.map(lm => (
                 <div
                   key={lm.type}
@@ -1240,26 +1244,26 @@ export default function Dashboard() {
                   onDragEnd={!isMobile() ? handleDragEnd : undefined}
                   tabIndex={0}
                   data-type={lm.type}
-                  className={`asset-item flex items-center gap-3 bg-[#23243a]/60 border border-accent-gold/30 rounded-lg px-4 py-2 text-base text-gray-200 cursor-grab hover:bg-gradient-to-r hover:from-accent-gold hover:to-yellow-400 hover:text-gray-900 transition animate-fadeInUp ${isMobile() ? 'cursor-pointer' : ''}`}
+                  className={`asset-item flex items-center gap-2 sm:gap-3 bg-[#23243a]/60 border border-accent-gold/30 rounded-lg px-2 sm:px-4 py-1 sm:py-2 text-sm sm:text-base text-gray-200 cursor-grab hover:bg-gradient-to-r hover:from-accent-gold hover:to-yellow-400 hover:text-gray-900 transition animate-fadeInUp ${isMobile() ? 'cursor-pointer' : ''}`}
                   onClick={isMobile() ? () => setSelectedAssetType(lm.type) : undefined}
                 >
-                  <span className="text-xl">{lm.icon}</span>
+                  <span className="text-lg sm:text-xl">{lm.icon}</span>
                   <span>{lm.label}</span>
                 </div>
               ))}
             </div>
             <div className="flex items-center gap-2">
-              <button className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded px-4 py-2 font-semibold shadow-glow hover:scale-105 transition">Upload</button>
-              <span className="text-gray-400 text-sm">(Coming soon)</span>
+              <button className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded px-3 sm:px-4 py-1 sm:py-2 font-semibold shadow-glow hover:scale-105 transition text-xs sm:text-base">Upload</button>
+              <span className="text-gray-400 text-xs sm:text-sm">(Coming soon)</span>
             </div>
             <div>
-              <h4 className="font-semibold text-base mb-2 text-accent-gold font-serif">My Maps</h4>
+              <h4 className="font-semibold text-sm sm:text-base mb-1 sm:mb-2 text-accent-gold font-serif">My Maps</h4>
               {mapsLoading ? <div>Loading...</div> : null}
-              {mapError && <div className="text-red-500 text-sm mb-2">{mapError}</div>}
+              {mapError && <div className="text-red-500 text-xs sm:text-sm mb-2">{mapError}</div>}
               <ul className="list-none p-0">
                 {maps.map(m => (
-                  <li key={m._id} className="mb-3">
-                    <span className="font-medium">{m.name}</span>
+                  <li key={m._id} className="mb-2 sm:mb-3">
+                    <span className="font-medium text-xs sm:text-base">{m.name}</span>
                     <button onClick={() => handleLoadMap(m._id)} className="ml-2 px-2 py-1 rounded bg-blue-600 text-white text-xs transition hover:bg-blue-700">Load</button>
                     <button onClick={() => handleDeleteMap(m._id)} className="ml-1 px-2 py-1 rounded bg-red-600 text-white text-xs transition hover:bg-red-700">Delete</button>
                     <div className="text-xs mt-1 text-gray-400">
@@ -1277,22 +1281,104 @@ export default function Dashboard() {
                   </li>
                 ))}
               </ul>
-              {mapMessage && <div className="text-green-600 text-sm mt-2">{mapMessage}</div>}
+              {mapMessage && <div className="text-green-600 text-xs sm:text-sm mt-2">{mapMessage}</div>}
             </div>
           </aside>
+          {/* Mobile sidebar modal/drawer */}
+          {isMobileScreen && mobileMenuOpen && (
+            <div className="fixed inset-0 z-50 flex items-end md:hidden" style={{background:'rgba(0,0,0,0.5)'}} onClick={() => setMobileMenuOpen(false)}>
+              <div className="bg-[#181c2a] w-full max-h-[90vh] rounded-t-2xl p-4 flex flex-col gap-4 overflow-y-auto animate-fadeInUp border-t border-accent-gold/60" onClick={e => e.stopPropagation()}>
+                <button className="self-end text-2xl text-accent-gold mb-2" aria-label="Close sidebar" onClick={() => setMobileMenuOpen(false)}>&times;</button>
+                {/* Tab Switcher */}
+                <div className="flex gap-2 mb-4">
+                  <button
+                    className={`flex-1 py-2 rounded-lg font-semibold transition text-sm ${mobileSidebarTab === 'assets' ? 'bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 shadow-glow' : 'bg-[#23243a] text-accent-gold border border-accent-gold/60'}`}
+                    onClick={() => setMobileSidebarTab('assets')}
+                  >
+                    Assets
+                  </button>
+                  <button
+                    className={`flex-1 py-2 rounded-lg font-semibold transition text-sm ${mobileSidebarTab === 'maps' ? 'bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 shadow-glow' : 'bg-[#23243a] text-accent-gold border border-accent-gold/60'}`}
+                    onClick={() => setMobileSidebarTab('maps')}
+                  >
+                    My Maps
+                  </button>
+                </div>
+                {/* Assets Tab */}
+                {mobileSidebarTab === 'assets' && (
+                  <>
+                    <div className="text-base font-bold text-accent-gold mb-1 font-serif">Assets</div>
+                    <div className="grid gap-2 mb-2 max-h-40 overflow-y-auto" id="landmark-palette">
+                      {landmarkIcons.map(lm => (
+                        <div
+                          key={lm.type}
+                          draggable={!isMobile()}
+                          onDragStart={!isMobile() ? () => handleDragStart(lm.type) : undefined}
+                          onDragEnd={!isMobile() ? handleDragEnd : undefined}
+                          tabIndex={0}
+                          data-type={lm.type}
+                          className={`asset-item flex items-center gap-2 bg-[#23243a]/60 border border-accent-gold/30 rounded-lg px-2 py-1 text-sm text-gray-200 cursor-grab hover:bg-gradient-to-r hover:from-accent-gold hover:to-yellow-400 hover:text-gray-900 transition animate-fadeInUp ${isMobile() ? 'cursor-pointer' : ''}`}
+                          onClick={isMobile() ? () => setSelectedAssetType(lm.type) : undefined}
+                        >
+                          <span className="text-lg">{lm.icon}</span>
+                          <span>{lm.label}</span>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <button className="bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded px-3 py-1 font-semibold shadow-glow hover:scale-105 transition text-xs">Upload</button>
+                      <span className="text-gray-400 text-xs">(Coming soon)</span>
+                    </div>
+                  </>
+                )}
+                {/* My Maps Tab */}
+                {mobileSidebarTab === 'maps' && (
+                  <>
+                    <div>
+                      <h4 className="font-semibold text-sm mb-1 text-accent-gold font-serif">My Maps</h4>
+                      {mapsLoading ? <div>Loading...</div> : null}
+                      {mapError && <div className="text-red-500 text-xs mb-2">{mapError}</div>}
+                      <ul className="list-none p-0">
+                        {maps.map(m => (
+                          <li key={m._id} className="mb-2">
+                            <span className="font-medium text-xs">{m.name}</span>
+                            <button onClick={() => handleLoadMap(m._id)} className="ml-2 px-2 py-1 rounded bg-blue-600 text-white text-xs transition hover:bg-blue-700">Load</button>
+                            <button onClick={() => handleDeleteMap(m._id)} className="ml-1 px-2 py-1 rounded bg-red-600 text-white text-xs transition hover:bg-red-700">Delete</button>
+                            <div className="text-xs mt-1 text-gray-400">
+                              <span>URL: </span>
+                              <input
+                                value={`${window.location.origin}/map/${m._id}`}
+                                readOnly
+                                className="w-3/4 text-xs px-2 py-1 rounded border border-gray-200 dark:border-neutral-600 bg-gray-50 dark:bg-neutral-700 mr-1"
+                              />
+                              <button
+                                className="text-xs px-2 py-1 rounded bg-blue-500 text-white hover:bg-blue-600 transition"
+                                onClick={() => navigator.clipboard.writeText(`${window.location.origin}/map/${m._id}`)}
+                              >Copy</button>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                      {mapMessage && <div className="text-green-600 text-xs mt-2">{mapMessage}</div>}
+                    </div>
+                  </>
+                )}
+              </div>
+            </div>
+          )}
         </div>
         {/* Floating Action Button (FAB) */}
         <button
-          className="fixed bottom-10 right-10 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-12 h-12 text-xl p-0 flex items-center justify-center shadow-glow hover:scale-110 transition z-50"
+          className="fixed bottom-6 sm:bottom-10 right-6 sm:right-10 bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 rounded-full w-10 h-10 sm:w-12 sm:h-12 text-lg sm:text-xl p-0 flex items-center justify-center shadow-glow hover:scale-110 transition z-50"
           onClick={() => setFabOpen(fab => !fab)}
           title="Quick Actions"
         >
           +
         </button>
         {fabOpen && (
-          <div className="fixed bottom-32 right-10 bg-[#181c2a]/90 border border-accent-gold/60 rounded-2xl shadow-[0_0_12px_#f6d36544] p-4 flex flex-col gap-2 z-50 animate-fadeInUp">
+          <div className="fixed bottom-24 sm:bottom-32 right-6 sm:right-10 bg-[#181c2a]/90 border border-accent-gold/60 rounded-2xl shadow-[0_0_12px_#f6d36544] p-3 sm:p-4 flex flex-col gap-2 z-50 animate-fadeInUp">
             {fabActions.map((action, idx) => (
-              <button key={idx} onClick={() => { action.onClick(); setFabOpen(false); }} className="flex items-center gap-2 px-4 py-2 rounded hover:bg-gradient-to-r hover:from-accent-gold hover:to-yellow-400 hover:text-gray-900 transition">
+              <button key={idx} onClick={() => { action.onClick(); setFabOpen(false); }} className="flex items-center gap-2 px-3 sm:px-4 py-1 sm:py-2 rounded hover:bg-gradient-to-r hover:from-accent-gold hover:to-yellow-400 hover:text-gray-900 transition text-xs sm:text-base">
                 <span className="mr-2">{action.icon}</span> {action.label}
               </button>
             ))}
@@ -1319,6 +1405,34 @@ export default function Dashboard() {
             <button onClick={()=>window.open(shareUrl, '_blank')} className="w-full py-2 rounded bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 mb-2 shadow-glow transition hover:from-yellow-400 hover:to-orange-300 hover:text-black hover:scale-105">Open Map Page</button>
             <button onClick={()=>setShareUrl('')} className="w-full py-2 rounded bg-gray-300 text-neutral-900 transition hover:bg-gray-400">Close</button>
             <div className="mt-2 text-accent-gold text-xs">URL copied to clipboard</div>
+          </div>
+        </div>
+      )}
+      {/* Mobile asset picker bottom sheet */}
+      {isMobileScreen && showAssetPicker && (
+        <div className="fixed inset-0 z-50 flex items-end md:hidden" style={{background:'rgba(0,0,0,0.3)'}} onClick={() => setShowAssetPicker(false)}>
+          <div className="bg-[#181c2a] w-full rounded-t-2xl p-4 flex flex-col gap-4 animate-fadeInUp border-t border-accent-gold/60" onClick={e => e.stopPropagation()}>
+            <div className="text-base font-bold text-accent-gold mb-2 font-serif text-center">Choose an Asset</div>
+            <div className="grid grid-cols-4 gap-3 max-h-48 overflow-y-auto">
+              {landmarkIcons.map(lm => (
+                <button
+                  key={lm.type}
+                  className="flex flex-col items-center justify-center bg-[#23243a]/60 border border-accent-gold/30 rounded-lg px-2 py-2 text-lg text-gray-200 hover:bg-gradient-to-r hover:from-accent-gold hover:to-yellow-400 hover:text-gray-900 transition"
+                  onClick={() => {
+                    // Place asset at pendingAssetCoords
+                    if (pendingAssetCoords) {
+                      setLandmarks(lms => [...lms, { type: lm.type, x: pendingAssetCoords.x, y: pendingAssetCoords.y, label: '' }]);
+                      setShowAssetPicker(false);
+                      setPendingAssetCoords(null);
+                    }
+                  }}
+                >
+                  <span>{lm.icon}</span>
+                  <span className="text-xs mt-1">{lm.label}</span>
+                </button>
+              ))}
+            </div>
+            <button className="mt-4 py-2 rounded-lg bg-red-500 text-white" onClick={() => setShowAssetPicker(false)}>Cancel</button>
           </div>
         </div>
       )}
