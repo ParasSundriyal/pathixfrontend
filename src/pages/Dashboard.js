@@ -1046,33 +1046,32 @@ export default function Dashboard() {
   // Calculate dynamic scale and convert lat/lng to x/y
   function latLngToXY(lat, lng) {
     if (!gpsOrigin) return { x: 0, y: 0 };
-    // Use bounds to determine scale
+    // Reference latitude for longitude scaling
+    const refLat = gpsOrigin.lat * Math.PI / 180;
+    const metersPerDegLat = 111320;
+    const metersPerDegLng = 111320 * Math.cos(refLat);
+
+    // Calculate offsets in meters from the origin
+    const dx = (lng - gpsOrigin.lng) * metersPerDegLng;
+    const dy = (lat - gpsOrigin.lat) * metersPerDegLat;
+
+    // Use bounds to determine the max dx/dy and fit to stageSize
     let minLat = bounds.minLat ?? lat;
     let maxLat = bounds.maxLat ?? lat;
     let minLng = bounds.minLng ?? lng;
     let maxLng = bounds.maxLng ?? lng;
-    // Add some padding
-    const padding = 0.0002;
-    minLat -= padding;
-    maxLat += padding;
-    minLng -= padding;
-    maxLng += padding;
-    // Calculate scale so all points fit in the canvas
-    let latRange = Math.abs(maxLat - minLat);
-    let lngRange = Math.abs(maxLng - minLng);
-    // Avoid division by zero
-    if (latRange === 0) latRange = 1e-9;
-    if (lngRange === 0) lngRange = 1e-9;
-    const fitScaleX = stageSize.width / lngRange;
-    const fitScaleY = stageSize.height / latRange;
-    const dynamic = Math.min(fitScaleX, fitScaleY);
-    const effectiveScale = dynamic * scale; // Combine fit and user zoom
-    // Centering
-    const centerLat = (minLat + maxLat) / 2;
-    const centerLng = (minLng + maxLng) / 2;
-    const x = stageSize.width / 2 + (lng - centerLng) * effectiveScale;
-    const y = stageSize.height / 2 - (lat - centerLat) * effectiveScale;
-    setDynamicScale(dynamic);
+    const padding = 40; // px
+    const maxDx = (maxLng - minLng) * metersPerDegLng;
+    const maxDy = (maxLat - minLat) * metersPerDegLat;
+    const scaleX = (stageSize.width - 2 * padding) / (maxDx || 1);
+    const scaleY = (stageSize.height - 2 * padding) / (maxDy || 1);
+    const scale = Math.min(scaleX, scaleY);
+
+    // Center the map
+    const x = stageSize.width / 2 + dx * scale;
+    const y = stageSize.height / 2 - dy * scale;
+
+    setDynamicScale(scale); // Optionally update dynamicScale state
     return { x, y };
   }
 
