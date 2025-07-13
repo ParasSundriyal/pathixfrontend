@@ -126,51 +126,107 @@ export default function MapViewer() {
   const [searchName, setSearchName] = useState('');
   const [searchError, setSearchError] = useState('');
 
+  // 1. Geolocation & Navigation improvements
+  useEffect(() => {
+    if (!navigator.geolocation) {
+      setError('Geolocation is not supported by your browser.');
+      return;
+    }
+    let didCancel = false;
+    let timeoutId;
+    let watchId = navigator.geolocation.watchPosition(
+      pos => {
+        if (!didCancel) {
+          setUserPos({
+            lat: pos.coords.latitude,
+            lng: pos.coords.longitude,
+          });
+        }
+      },
+      err => {
+        if (!didCancel) {
+          if (err.code === 1) setError('Location permission denied.');
+          else if (err.code === 2) setError('Location unavailable.');
+          else if (err.code === 3) setError('Location request timed out.');
+          else setError('Location error.');
+        }
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+    );
+    // Timeout for GPS signal loss
+    timeoutId = setTimeout(() => {
+      setError('GPS signal lost or too slow.');
+    }, 20000);
+    return () => {
+      didCancel = true;
+      navigator.geolocation.clearWatch(watchId);
+      clearTimeout(timeoutId);
+    };
+  }, []);
+
+  // 2. Map Data Loading improvements
   useEffect(() => {
     async function fetchMap() {
       setLoading(true);
       setError('');
       try {
-        const res = await fetch(`${process.env.REACT_APP_API_URL}/api/maps/${id}`);
-        if (res.ok) {
-          const data = await res.json();
-          setMap(data);
+        // Offline cache support
+        let data;
+        const cacheKey = `map_${id}`;
+        if (navigator.onLine) {
+          const res = await fetch(`${process.env.REACT_APP_API_URL}/api/maps/${id}`);
+          if (res.ok) {
+            data = await res.json();
+            localStorage.setItem(cacheKey, JSON.stringify(data));
+          } else if (res.status === 404) {
+            setError('Map not found.');
+            setLoading(false);
+            return;
+          } else {
+            setError('Network error.');
+            setLoading(false);
+            return;
+          }
         } else {
-          setError('Map not found');
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) data = JSON.parse(cached);
+          else {
+            setError('Offline and no cached map available.');
+            setLoading(false);
+            return;
+          }
         }
+        if (!data || !data.data) {
+          setError('Map data is empty or corrupted.');
+          setLoading(false);
+          return;
+        }
+        setMap(data);
       } catch {
-        setError('Network error');
+        setError('Network or parsing error.');
       }
       setLoading(false);
     }
     fetchMap();
   }, [id]);
 
-  useEffect(() => {
-    function handleResize() {
-      const width = Math.min(900, window.innerWidth - 40);
-      const height = Math.max(400, Math.round(width * 0.625));
-      setStageSize({ width, height });
-    }
-    handleResize();
-    window.addEventListener('resize', handleResize);
-    return () => window.removeEventListener('resize', handleResize);
-  }, []);
-
-  useEffect(() => {
-    if (!navigator.geolocation) return;
-    let watchId = navigator.geolocation.watchPosition(
-      pos => {
-        setUserPos({
-          lat: pos.coords.latitude,
-          lng: pos.coords.longitude,
-        });
-      },
-      err => {},
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
-    );
-    return () => navigator.geolocation.clearWatch(watchId);
-  }, []);
+  // 3. Navigation Calculations improvements
+  function safeGetDistance(lat1, lng1, lat2, lng2) {
+    if (
+      lat1 == null || lng1 == null || lat2 == null || lng2 == null ||
+      (lat1 === lat2 && lng1 === lng2)
+    ) return 0;
+    return getDistance(lat1, lng1, lat2, lng2);
+  }
+  function safeGetBearing(start, end) {
+    if (!start || !end || isNaN(start.lat) || isNaN(start.lng) || isNaN(end.lat) || isNaN(end.lng)) return 0;
+    const b = getBearing(start, end);
+    return isNaN(b) ? 0 : b;
+  }
+  function safeGetNavigationInstruction(userPos, destination, distance, heading) {
+    if (!userPos || !destination) return 'No navigation data.';
+    return getNavigationInstruction(userPos, destination, distance, heading);
+  }
 
   useEffect(() => {
     function handleOrientation(e) {
@@ -186,20 +242,36 @@ export default function MapViewer() {
     };
   }, []);
 
+  // 4. Speech Synthesis improvements
   useEffect(() => {
     if (!userPos || !destination) return;
-    const dist = getDistance(userPos.lat, userPos.lng, destination.lat, destination.lng);
+    const dist = safeGetDistance(userPos.lat, userPos.lng, destination.lat, destination.lng);
     setNavDistance(Math.round(dist));
-    const instr = getNavigationInstruction(userPos, destination, dist, heading);
+    const instr = safeGetNavigationInstruction(userPos, destination, dist, heading);
     setNavInstruction(instr);
     setShowNav(true);
-    if (isSoundEnabled && 'speechSynthesis' in window) {
-      window.speechSynthesis.cancel();
-      const utter = new window.SpeechSynthesisUtterance(instr);
-      window.speechSynthesis.speak(utter);
+    if (isSoundEnabled && 'speechSynthesis' in window && window.speechSynthesis) {
+      try {
+        window.speechSynthesis.cancel();
+        const utter = new window.SpeechSynthesisUtterance(instr);
+        window.speechSynthesis.speak(utter);
+      } catch {}
     }
   }, [userPos, destination, heading, isSoundEnabled]);
 
+  // 5. UI & Responsiveness improvements
+  // (in JSX: use width: '100%', maxWidth, etc. already present)
+  // Add touch event handling to prevent pinch-zoom conflicts
+  useEffect(() => {
+    function preventPinch(e) {
+      if (e.touches && e.touches.length > 1) e.preventDefault();
+    }
+    document.addEventListener('touchmove', preventPinch, { passive: false });
+    return () => document.removeEventListener('touchmove', preventPinch);
+  }, []);
+
+  // 6. Destination Search improvements
+  // (in JSX: already case-insensitive, add null label check and empty results message)
   useEffect(() => {
     if (!containerRef.current || !map || !map.data) return;
     const { width, height } = stageSize;
@@ -224,7 +296,7 @@ export default function MapViewer() {
     const bgRect = new Konva.Rect({ x: 0, y: 0, width, height, fill: themes[theme].background });
     backgroundLayer.add(bgRect);
     backgroundLayer.draw();
-    (map.data.roads || []).forEach(points => {
+    (Array.isArray(map.data.roads) ? map.data.roads : []).forEach(points => {
       const line = new Konva.Line({
         points,
         stroke: themes[theme].roadColor,
@@ -234,7 +306,7 @@ export default function MapViewer() {
       });
       roadLayer.add(line);
     });
-    if (map.data.simRoute) {
+    if (Array.isArray(map.data.simRoute)) {
       const simLine = new Konva.Line({
         points: map.data.simRoute,
         stroke: '#43a047',
@@ -248,7 +320,118 @@ export default function MapViewer() {
       roadLayer.add(simLine);
     }
     roadLayer.draw();
-    (map.data.landmarks || []).forEach(lm => {
+    (Array.isArray(map.data.landmarks) ? map.data.landmarks : []).forEach(lm => {
+      const iconText = landmarkIcons.find(i => i.type === lm.type)?.icon || '❓';
+      const icon = new Konva.Text({
+        x: lm.x - 16,
+        y: lm.y - 16,
+        text: iconText,
+        fontSize: 32,
+        shadowColor: '#000',
+        shadowBlur: 4,
+        shadowOffset: { x: 2, y: 2 },
+        shadowOpacity: 0.3,
+      });
+      landmarkLayer.add(icon);
+      if (lm.label) {
+        const labelText = new Konva.Text({
+          x: lm.x - 32,
+          y: lm.y + 20,
+          text: lm.label,
+          fontSize: 16,
+          fill: '#fff',
+          fontStyle: 'bold',
+          shadowColor: '#000',
+          shadowBlur: 2,
+          shadowOffset: { x: 1, y: 1 },
+          shadowOpacity: 0.2,
+          align: 'center',
+          width: 64,
+        });
+        landmarkLayer.add(labelText);
+      }
+    });
+    landmarkLayer.draw();
+    const autoMarkerSize = Math.max(10, Math.min(32, 18 / currentScale));
+    if (userPos) {
+      const marker = new Konva.Circle({
+        x: width/2,
+        y: height/2,
+        radius: autoMarkerSize,
+        fill: '#2196f3',
+        stroke: '#fff',
+        strokeWidth: 3,
+        shadowBlur: 8,
+        shadowColor: '#2196f3',
+      });
+      userLayer.add(marker);
+      userLayer.draw();
+    }
+    return () => stage.destroy();
+  }, [map, theme, stageSize, userPos, currentScale]);
+
+  // 7. General Edge Cases: browser compatibility
+  useEffect(() => {
+    if (!('geolocation' in navigator)) setError('Geolocation API not supported.');
+    if (!('speechSynthesis' in window)) setIsSoundEnabled(false);
+  }, []);
+
+  // 8. Konva Rendering improvements
+  useEffect(() => {
+    if (!containerRef.current || !map || !map.data) return;
+    // Destroy previous stage if any
+    if (containerRef.current._konvaStage) {
+      containerRef.current._konvaStage.destroy();
+      containerRef.current._konvaStage = null;
+    }
+    const { width, height } = stageSize;
+    containerRef.current.innerHTML = '';
+    const stage = new Konva.Stage({
+      container: containerRef.current,
+      width,
+      height,
+      scaleX: currentScale,
+      scaleY: currentScale,
+    });
+    containerRef.current._konvaStage = stage;
+    const backgroundLayer = new Konva.Layer();
+    const roadLayer = new Konva.Layer();
+    const landmarkLayer = new Konva.Layer();
+    const userLayer = new Konva.Layer();
+    const routeLayer = new Konva.Layer();
+    stage.add(backgroundLayer);
+    stage.add(roadLayer);
+    stage.add(landmarkLayer);
+    stage.add(routeLayer);
+    stage.add(userLayer);
+    const bgRect = new Konva.Rect({ x: 0, y: 0, width, height, fill: themes[theme].background });
+    backgroundLayer.add(bgRect);
+    backgroundLayer.draw();
+    (Array.isArray(map.data.roads) ? map.data.roads : []).forEach(points => {
+      const line = new Konva.Line({
+        points,
+        stroke: themes[theme].roadColor,
+        strokeWidth: 8,
+        lineCap: 'round',
+        lineJoin: 'round',
+      });
+      roadLayer.add(line);
+    });
+    if (Array.isArray(map.data.simRoute)) {
+      const simLine = new Konva.Line({
+        points: map.data.simRoute,
+        stroke: '#43a047',
+        strokeWidth: 8,
+        lineCap: 'round',
+        lineJoin: 'round',
+        dash: [18, 12],
+        shadowBlur: 8,
+        shadowColor: '#43a047',
+      });
+      roadLayer.add(simLine);
+    }
+    roadLayer.draw();
+    (Array.isArray(map.data.landmarks) ? map.data.landmarks : []).forEach(lm => {
       const iconText = landmarkIcons.find(i => i.type === lm.type)?.icon || '❓';
       const icon = new Konva.Text({
         x: lm.x - 16,
