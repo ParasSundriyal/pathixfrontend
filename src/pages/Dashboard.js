@@ -526,6 +526,10 @@ export default function Dashboard() {
               console.warn('GPS jump filtered:', dist, 'meters');
               return;
             }
+            if (dist < 3) {
+              // Small movement, likely GPS noise, ignore
+              return;
+            }
             lastPosRef.current = { lat, lng };
             setBounds(prev => ({
               minLat: Math.min(prev.minLat, lat),
@@ -598,6 +602,10 @@ export default function Dashboard() {
             const dist = getDistanceMeters(lastPosRef.current.lat, lastPosRef.current.lng, lat, lng);
             if (dist > 30) {
               console.warn('GPS jump filtered:', dist, 'meters');
+              return;
+            }
+            if (dist < 3) {
+              // Small movement, likely GPS noise, ignore
               return;
             }
             lastPosRef.current = { lat, lng };
