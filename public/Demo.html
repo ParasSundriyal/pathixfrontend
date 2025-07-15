@@ -1,0 +1,1127 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pathix</title>
+  <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/konva@9.2.0/konva.min.js"></script>
+  <link rel="stylesheet" href="style_index.css">
+</head>
+
+<body>
+  <header>
+    <div class="app-title">
+      <span>🗺️</span>
+      <span>Pathix</span>
+    </div>
+    <div class="subtitle">Design, annotate, and export property maps with ease</div>
+  </header>
+  <div class="main-layout">
+    <div class="map-area glass-card">
+      <div class="toolbar">
+        <label for="theme-select">Theme:</label>
+        <select id="theme-select">
+          <option value="classic">Classic</option>
+          <option value="night" selected>Night</option>
+        </select>
+        <button id="start-gps">Start GPS Tracking</button>
+        <button id="stop-gps" disabled>Stop GPS Tracking</button>
+        <button id="export-map">Export Map</button>
+        <button id="save-map">Save Map</button>
+        <button id="simulate-route">Simulate Route</button>
+        <div id="gps-status" class="gps-status off">
+          <span class="dot"></span>
+          GPS Tracking: OFF
+        </div>
+      </div>
+      <div class="map-canvas-card">
+        <div id="container"></div>
+        <div id="mobile-zoom-controls"
+          style="display:none; position:absolute; bottom:16px; right:16px; z-index:10; flex-direction:column; gap:10px;">
+          <button id="zoom-in-btn"
+            style="font-size:2rem; width:48px; height:48px; border-radius:50%; border:none; background:var(--primary); color:#fff; box-shadow:0 2px 8px #23294633;">+</button>
+          <button id="zoom-out-btn"
+            style="font-size:2rem; width:48px; height:48px; border-radius:50%; border:none; background:var(--primary); color:#fff; box-shadow:0 2px 8px #23294633;">-</button>
+        </div>
+      </div>
+    </div>
+    <aside class="asset-panel glass-card">
+      <div class="asset-title">Assets</div>
+      <div class="asset-list" id="landmark-palette"></div>
+      <div class="asset-upload">
+        <button class="upload-btn">Upload</button>
+        <span style="color:var(--text-muted); font-size:0.98em;">(Coming soon)</span>
+      </div>
+
+    </aside>
+  </div>
+  <footer style="text-align:center; color:var(--text-muted); font-size:0.98em; margin-bottom:18px; margin-top:10px;">
+    &copy; 2024 Pathix &mdash; Crafted with <span style="color:var(--accent);">&#10084;&#65039;</span>
+  </footer>
+
+  <!-- Login Modal -->
+  <div id="login-modal" class="modal" style="display: none;">
+    <div class="modal-content glass-card">
+      <h2>Login to Save Map</h2>
+      <form id="login-form">
+        <div class="form-group">
+          <label for="username">Username:</label>
+          <input type="text" id="username" required>
+        </div>
+        <div class="form-group">
+          <label for="password">Password:</label>
+          <input type="password" id="password" required>
+        </div>
+        <div class="form-actions">
+          <button type="submit">Login</button>
+          <button type="button" id="close-modal">Cancel</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script>
+    // =====================
+    // Pathix Main Script
+    // =====================
+    // This script handles map drawing, landmark placement, GPS tracking, export, and UI logic.
+    // Uses Konva.js for canvas drawing and custom logic for map features.
+
+    // --- Theme definitions ---
+    // Defines color schemes for classic and night modes
+    const themes = {
+      classic: {
+        background: '#e0e7ff',
+        roadColor: '#374151',
+      },
+      night: {
+        background: '#232946',
+        roadColor: '#eebbc3',
+      },
+    };
+
+    // --- Landmark emoji mapping ---
+    // Maps landmark types to emoji icons
+    const landmarkEmojis = {
+      house: '🏠',
+      tree: '🌳',
+      building: '🏢',
+      hospital: '🏥',
+      police: '🚓',
+      cafe: '☕',
+      pool: '🏊',
+      school: '🏫',
+      toilet: '🚻',
+      villa: '🏡',
+      apartment: '🏬',
+      shop: '🏪',
+      church: '⛪',
+      mosque: '🕌',
+      synagogue: '🕍',
+      bank: '🏦',
+      fire: '🚒',
+      pharmacy: '💊',
+      restaurant: '🍽️',
+      parking: '🅿️',
+    };
+
+    // --- Konva setup ---
+    // Initializes the main drawing stage and layers
+    const width = 800;
+    const height = 500;
+    let mapName = 'Map Name'; // Store the map name
+    const stage = new Konva.Stage({
+      container: 'container',
+      width,
+      height,
+    });
+
+    const backgroundLayer = new Konva.Layer();
+    const roadLayer = new Konva.Layer();
+    const landmarkLayer = new Konva.Layer();
+    const layer = new Konva.Layer();
+
+    // --- Editable map name text ---
+    // Displays and allows editing of the map name
+    const simpleText = new Konva.Text({
+      x: stage.width() / 2-40,
+      y: 15,
+      text: mapName,
+      fontSize: 30,
+      fontFamily: 'Poppins',
+      fill: 'Grey',
+      id: 'mapNameText',
+      draggable: false,
+      width: 200,
+      align: 'center',
+    });
+    layer.add(simpleText);
+    stage.add(backgroundLayer);
+    stage.add(roadLayer);
+    stage.add(landmarkLayer);
+    stage.add(layer);
+  
+
+    // --- Draw background rect ---
+    let bgRect = new Konva.Rect({
+      x: 0, y: 0, width, height, fill: '#fff'
+    });
+    backgroundLayer.add(bgRect);
+    backgroundLayer.draw();
+
+    // --- Theme switching event ---
+    // Changes map and road colors when theme is changed
+    document.getElementById('theme-select').addEventListener('change', (e) => {
+      currentTheme = e.target.value;
+      const theme = themes[currentTheme];
+
+      // Update background color if no image is loaded
+      if (!bgImg.complete || bgImg.naturalWidth === 0) {
+        bgRect.fill(theme.background);
+      }
+
+      // Update GPS and drawn road colors
+      roadLayer.getChildren().forEach((line) => {
+        if (line.className === 'Line') {
+          line.stroke(theme.roadColor);
+        }
+      });
+      roadLayer.batchDraw();
+    });
+
+    // --- Road drawing state ---
+    let isDrawing = false;
+    let currentLine = null;
+    let currentTheme = 'classic';
+
+    // --- Drag and drop landmarks ---
+    // Handles drag events for asset palette and canvas
+    const palette = document.getElementById('landmark-palette');
+    let dragType = null;
+
+    palette.addEventListener('dragstart', (e) => {
+      dragType = e.target.getAttribute('data-type');
+    });
+    palette.addEventListener('dragend', (e) => {
+      dragType = null;
+    });
+
+    // Allow dropping on canvas
+    const container = stage.container();
+    container.addEventListener('dragover', (e) => {
+      e.preventDefault();
+    });
+    container.addEventListener('drop', (e) => {
+      e.preventDefault();
+      if (!dragType) return;
+      // Get mouse position relative to canvas
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      addLandmark(dragType, x, y);
+      dragType = null;
+    });
+
+    // --- Touch support for mobile drag-and-drop ---
+    let touchLandmark = null;
+    let touchType = null;
+    let touchMoveHandler = null;
+    let touchEndHandler = null;
+
+    // --- Mobile tap-to-center for palette icons ---
+    function isMobile() {
+      return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+    }
+
+    if (isMobile()) {
+      palette.addEventListener('touchend', function (e) {
+        const target = e.target.closest('.asset-item');
+        if (!target) return;
+        // Prevent drag/long-press from also firing
+        if (e.cancelBubble) return;
+        e.preventDefault();
+        const type = target.getAttribute('data-type');
+        // Place at center of canvas
+        const centerX = width / 2;
+        const centerY = height / 2;
+        const marker = addLandmark(type, centerX, centerY, true); // true = return marker
+        // Ensure marker is draggable and brought to top
+        if (marker) {
+          marker.draggable(true);
+          marker.moveToTop();
+          marker.fire('dragstart'); // visually indicate it's draggable
+        }
+      }, { passive: false });
+    }
+
+    // --- Landmark label popup ---
+    let popupDiv = null;
+    let currentLandmark = null;
+    function showLandmarkPopup(lmNode) {
+      // Remove any existing popup
+      if (popupDiv) popupDiv.remove();
+      currentLandmark = lmNode;
+      // Get position on screen
+      const stageBox = stage.container().getBoundingClientRect();
+      const absPos = lmNode.getAbsolutePosition();
+      let x = stageBox.left + absPos.x;
+      let y = stageBox.top + absPos.y;
+      // Responsive: center on mobile, right of marker on desktop
+      if (window.innerWidth < 600) {
+        x = window.innerWidth / 2 - 150;
+        y = window.innerHeight / 2 - 80;
+      } else {
+        x = x + 30;
+        y = y - 10;
+      }
+      // Create popup
+      popupDiv = document.createElement('div');
+      popupDiv.className = 'landmark-popup';
+      popupDiv.style.left = x + 'px';
+      popupDiv.style.top = y + 'px';
+      popupDiv.style.maxWidth = window.innerWidth < 600 ? '90vw' : '320px';
+      popupDiv.style.minWidth = window.innerWidth < 600 ? '60vw' : '220px';
+      popupDiv.innerHTML = `
+        <div class="landmark-popup-title">Edit Place Label</div>
+        <input id="lm-label-input" class="landmark-popup-input" type="text" value="${lmNode.getAttr('label') || ''}" placeholder="Enter name or description..." />
+        <div class="landmark-popup-actions">
+          <button id="lm-label-save" class="landmark-popup-btn save">Save</button>
+          <button id="lm-label-cancel" class="landmark-popup-btn cancel">Cancel</button>
+          <button id="lm-label-delete" class="landmark-popup-btn delete">Delete</button>
+        </div>
+      `;
+      document.body.appendChild(popupDiv);
+      document.getElementById('lm-label-input').focus();
+      // Save handler
+      document.getElementById('lm-label-save').onclick = function () {
+        const val = document.getElementById('lm-label-input').value.trim();
+        lmNode.setAttr('label', val);
+        updateLandmarkLabels();
+        closeLandmarkPopup();
+      };
+      document.getElementById('lm-label-cancel').onclick = closeLandmarkPopup;
+      document.getElementById('lm-label-delete').onclick = function () {
+        // Remove the landmark and its label
+        lmNode.destroy();
+        updateLandmarkLabels();
+        closeLandmarkPopup();
+        landmarkLayer.batchDraw();
+      };
+      // Close on outside click
+      setTimeout(() => {
+        window.addEventListener('mousedown', outsidePopupClick);
+        window.addEventListener('touchstart', outsidePopupClick);
+      }, 0);
+    }
+    function closeLandmarkPopup() {
+      if (popupDiv) popupDiv.remove();
+      popupDiv = null;
+      currentLandmark = null;
+      window.removeEventListener('mousedown', outsidePopupClick);
+      window.removeEventListener('touchstart', outsidePopupClick);
+    }
+    function outsidePopupClick(e) {
+      if (popupDiv && !popupDiv.contains(e.target)) closeLandmarkPopup();
+    }
+    // Add label text below each landmark
+    function updateLandmarkLabels() {
+      // Remove all label nodes
+      landmarkLayer.getChildren().forEach(node => {
+        if (node.getAttr('isLabel')) node.destroy();
+      });
+      // For each landmark, add label if present
+      landmarkLayer.getChildren().forEach(lm => {
+        if (lm.className === 'Text' && lm.getAttr('label')) {
+          const label = new Konva.Text({
+            x: lm.x(),
+            y: lm.y() + 32,
+            text: lm.getAttr('label'),
+            fontSize: 15,
+            fill: 'var(--text)',
+            fontStyle: 'bold',
+            align: 'center',
+            width: 40,
+            offsetX: 4,
+            isLabel: true
+          });
+          label.x(lm.x() - (label.width() - 32) / 2);
+          landmarkLayer.add(label);
+        }
+      });
+      landmarkLayer.batchDraw();
+    }
+    // Listen for click/tap on landmarks
+    stage.on('click tap', function (e) {
+      if (e.target.getParent() === landmarkLayer && e.target.className === 'Text') {
+        showLandmarkPopup(e.target);
+      }
+    });
+
+    function addLandmark(type, x, y, returnNode) {
+      const emoji = landmarkEmojis[type] || '❓';
+      const text = new Konva.Text({
+        x: x - 16,
+        y: y - 16,
+        text: emoji,
+        fontSize: 32,
+        draggable: true,
+        shadowColor: '#000',
+        shadowBlur: 4,
+        shadowOffset: { x: 2, y: 2 },
+        shadowOpacity: 0.3,
+      });
+      landmarkLayer.add(text);
+      landmarkLayer.draw();
+      updateLandmarkLabels();
+      if (returnNode) return text;
+      console.log('Landmark added:', { type, x, y });
+    }
+
+    // GPS Road Drawing
+    let gpsWatchId = null;
+    let gpsLine = null;
+    let gpsPath = [];
+    let gpsOrigin = { lat: 28.6139, lng: 77.2090 };
+    const gpsScale = 100000;
+
+    // Kalman filter for GPS smoothing
+    class SimpleKalmanFilter {
+      constructor(R = 0.00001, Q = 0.0001, A = 1, B = 0, C = 1) {
+        this.R = R; // noise covariance
+        this.Q = Q; // process covariance
+        this.A = A;
+        this.B = B;
+        this.C = C;
+        this.cov = NaN;
+        this.x = NaN;
+      }
+      filter(z, u = 0) {
+        if (isNaN(this.x)) {
+          this.x = (1 / this.C) * z;
+          this.cov = (1 / this.C) * this.Q * (1 / this.C);
+        } else {
+          // Prediction
+          const predX = (this.A * this.x) + (this.B * u);
+          const predCov = ((this.A * this.cov) * this.A) + this.R;
+
+          // Kalman gain
+          const K = predCov * this.C / ((this.C * predCov * this.C) + this.Q);
+
+          // Correction
+          this.x = predX + K * (z - (this.C * predX));
+          this.cov = predCov - (K * this.C * predCov);
+        }
+        return this.x;
+      }
+      lastMeasurement() {
+        return this.x;
+      }
+    }
+
+    let gpsLatKalman = null;
+    let gpsLngKalman = null;
+
+    function latLngToCanvas(lat, lng) {
+      if (!gpsOrigin) return { x: width / 2, y: height / 2 };
+      // Simple equirectangular projection, not for large distances
+      const x = width / 2 + (lng - gpsOrigin.lng) * gpsScale;
+      const y = height / 2 - (lat - gpsOrigin.lat) * gpsScale;
+      return { x, y };
+    }
+
+    function setGpsStatus(isOn) {
+      const status = document.getElementById('gps-status');
+      if (isOn) {
+        status.classList.add('on');
+        status.classList.remove('off');
+        status.textContent = '';
+        status.innerHTML = '<span class="dot"></span>GPS Tracking: ON';
+      } else {
+        status.classList.add('off');
+        status.classList.remove('on');
+        status.textContent = '';
+        status.innerHTML = '<span class="dot"></span>GPS Tracking: OFF';
+      }
+    }
+
+    document.getElementById('start-gps').onclick = function () {
+      if (!navigator.geolocation) {
+        alert('Geolocation is not supported by your browser.');
+        return;
+      }
+      this.disabled = true;
+      document.getElementById('stop-gps').disabled = false;
+      gpsPath = [];
+      gpsOrigin = null;
+      if (gpsLine) { gpsLine.destroy(); gpsLine = null; }
+      const theme = themes[document.getElementById('theme-select').value];
+      gpsLine = new Konva.Line({
+        stroke: theme.roadColor,
+        strokeWidth: 8,
+        points: [],
+        lineCap: 'round',
+        lineJoin: 'round',
+      });
+      roadLayer.add(gpsLine);
+      roadLayer.draw();
+
+      // Initialize Kalman filters for lat/lng
+      gpsLatKalman = new SimpleKalmanFilter();
+      gpsLngKalman = new SimpleKalmanFilter();
+      gpsWatchId = navigator.geolocation.watchPosition(function (pos) {
+        const { latitude: lat, longitude: lng } = pos.coords;
+        if (!gpsOrigin) {
+          gpsOrigin = { lat, lng };
+        }
+        gpsPath.push({ lat, lng });
+
+        // Apply Kalman filter smoothing
+        const smoothLat = gpsLatKalman.filter(lat);
+        const smoothLng = gpsLngKalman.filter(lng);
+        const pt = latLngToCanvas(smoothLat, smoothLng);
+        const newPoints = gpsLine.points().concat([pt.x, pt.y]);
+        gpsLine.points(newPoints);
+        roadLayer.batchDraw();
+      }, function (err) {
+        alert('Error getting GPS position: ' + err.message);
+        document.getElementById('start-gps').disabled = false;
+        document.getElementById('stop-gps').disabled = true;
+      }, {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 15000
+      });
+      setGpsStatus(true);
+    };
+
+    document.getElementById('stop-gps').onclick = function () {
+      if (gpsWatchId !== null) {
+        navigator.geolocation.clearWatch(gpsWatchId);
+        gpsWatchId = null;
+      }
+      this.disabled = true;
+      document.getElementById('start-gps').disabled = false;
+      // gpsPath now contains the recorded GPS coordinates
+      // You can use gpsPath for later tracking or export
+      // Example: console.log('GPS Path:', gpsPath);
+      setGpsStatus(false);
+    };
+
+    // Helper to convert an image to a data URL
+    function imageToDataURL(img) {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.width;
+      canvas.height = img.height;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0);
+      return canvas.toDataURL('image/png');
+    }
+
+    // Export Map Functionality
+    document.getElementById('export-map').onclick = function () {
+      // Collect roads
+      const roads = [];
+      roadLayer.getChildren().forEach(line => {
+        if (line.className === 'Line') {
+          // Always convert canvas points to {lat, lng}
+          const pts = line.points();
+          const arr = [];
+          // Use gpsOrigin or default
+          const origin = gpsOrigin || { lat: 28.6139, lng: 77.2090 };
+          for (let i = 0; i < pts.length; i += 2) {
+            const x = pts[i];
+            const y = pts[i + 1];
+            const lng = ((x - width / 2) / gpsScale) + origin.lng;
+            const lat = origin.lat - ((y - height / 2) / gpsScale);
+            arr.push({ lat, lng });
+          }
+          roads.push({ points: arr });
+        }
+      });
+      // Collect landmarks
+      const landmarks = [];
+      landmarkLayer.getChildren().forEach(lm => {
+        if (lm.className === 'Text') {
+          // Convert canvas x/y to lat/lng if possible
+          let type = null;
+          for (const key in landmarkEmojis) {
+            if (landmarkEmojis[key] === lm.text()) type = key;
+          }
+          let lat = null, lng = null;
+          if (gpsOrigin) {
+            const x = lm.x() + 16;
+            const y = lm.y() + 16;
+            lng = ((x - width / 2) / gpsScale) + gpsOrigin.lng;
+            lat = gpsOrigin.lat - ((y - height / 2) / gpsScale);
+          }
+          landmarks.push({ type, lat, lng });
+        }
+      });
+      // Collect all image-based icons and emoji landmarks as images
+      const icons = [];
+      landmarkLayer.getChildren().forEach(node => {
+        if (node.className === 'Image' && node.image()) {
+          icons.push({
+            type: node.getAttr('type') || '',
+            x: node.x(),
+            y: node.y(),
+            width: node.width(),
+            height: node.height(),
+            src: node.image().src // should be a data URL
+          });
+        } else if (node.className === 'Text') {
+          // Render emoji to canvas and export as image
+          const canvas = document.createElement('canvas');
+          canvas.width = 40;
+          canvas.height = 40;
+          const ctx = canvas.getContext('2d');
+          ctx.font = '32px Poppins, Segoe UI, Arial, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(node.text(), 20, 20);
+          const dataUrl = canvas.toDataURL('image/png');
+          icons.push({
+            type: (() => {
+              for (const key in landmarkEmojis) {
+                if (landmarkEmojis[key] === node.text()) return key;
+              }
+              return '';
+            })(),
+            x: node.x(),
+            y: node.y(),
+            width: 32,
+            height: 32,
+            src: dataUrl
+          });
+        }
+      });
+      // Convert background image to data URL
+      let bgDataUrl = null;
+      if (bgImg && bgImg.complete && bgImg.naturalWidth > 0) {
+        bgDataUrl = imageToDataURL(bgImg);
+      }
+      // Convert custom icon to data URL
+      let iconDataUrl = null;
+      if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
+        iconDataUrl = imageToDataURL(iconImg);
+      }
+      // Compose map data
+      const mapData = {
+        name: mapName, // Include map name
+        gpsOrigin: gpsOrigin || { lat: 28.6139, lng: 77.2090 },
+        gpsScale,
+        roads,
+        landmarks,
+        icons,
+        assets: {
+          background: bgDataUrl,
+          landmarkHotel: iconDataUrl
+        }
+      };
+      // Download as JSON
+      const blob = new Blob([JSON.stringify(mapData, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (mapName ? mapName.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'property-map') + '.json';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    };
+
+    // --- Add after Konva stage setup ---
+
+    // Initial scale and position
+    let scaleBy = 1.1;
+    let minScale = 0.5;
+    let maxScale = 4;
+
+    // Show zoom controls on mobile
+    if (isMobile()) {
+      document.getElementById('mobile-zoom-controls').style.display = 'flex';
+      document.getElementById('zoom-in-btn').onclick = function () {
+        const oldScale = stage.scaleX();
+        let newScale = Math.min(maxScale, oldScale * scaleBy);
+        stage.scale({ x: newScale, y: newScale });
+        stage.position({ x: 0, y: 0 });
+        stage.batchDraw();
+      };
+      document.getElementById('zoom-out-btn').onclick = function () {
+        const oldScale = stage.scaleX();
+        let newScale = Math.max(minScale, oldScale / scaleBy);
+        stage.scale({ x: newScale, y: newScale });
+        stage.position({ x: 0, y: 0 });
+        stage.batchDraw();
+      };
+    }
+
+    // Zoom with mouse wheel
+    stage.container().addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const oldScale = stage.scaleX();
+      const pointer = stage.getPointerPosition();
+
+      let direction = e.deltaY > 0 ? -1 : 1;
+      let newScale = direction > 0 ? oldScale * scaleBy : oldScale / scaleBy;
+      newScale = Math.max(minScale, Math.min(maxScale, newScale));
+
+      // Calculate new position to keep pointer under mouse
+      const mousePointTo = {
+        x: (pointer.x - stage.x()) / oldScale,
+        y: (pointer.y - stage.y()) / oldScale,
+      };
+
+      stage.scale({ x: newScale, y: newScale });
+
+      const newPos = {
+        x: pointer.x - mousePointTo.x * newScale,
+        y: pointer.y - mousePointTo.y * newScale,
+      };
+      stage.position(newPos);
+      stage.batchDraw();
+    });
+
+    // Pan with drag
+    let lastDist = null;
+    let lastCenter = null;
+
+    stage.on('mousedown touchstart', (e) => {
+      if (e.evt.touches && e.evt.touches.length === 2) {
+        // Pinch start
+        const [touch1, touch2] = e.evt.touches;
+        lastDist = Math.hypot(
+          touch1.clientX - touch2.clientX,
+          touch1.clientY - touch2.clientY
+        );
+        lastCenter = {
+          x: (touch1.clientX + touch2.clientX) / 2,
+          y: (touch1.clientY + touch2.clientY) / 2,
+        };
+      } else {
+        stage.draggable(true);
+      }
+    });
+
+    stage.on('mouseup touchend', (e) => {
+      stage.draggable(false);
+      lastDist = null;
+      lastCenter = null;
+    });
+
+    stage.on('touchmove', (e) => {
+      if (e.evt.touches && e.evt.touches.length === 2) {
+        // Pinch zoom
+        const [touch1, touch2] = e.evt.touches;
+        const dist = Math.hypot(
+          touch1.clientX - touch2.clientX,
+          touch1.clientY - touch2.clientY
+        );
+        const center = {
+          x: (touch1.clientX + touch2.clientX) / 2,
+          y: (touch1.clientY + touch2.clientY) / 2,
+        };
+        if (lastDist && lastCenter) {
+          let scale = stage.scaleX() * (dist / lastDist);
+          scale = Math.max(minScale, Math.min(maxScale, scale));
+          stage.scale({ x: scale, y: scale });
+
+          // Adjust position to keep center under fingers
+          const dx = center.x - lastCenter.x;
+          const dy = center.y - lastCenter.y;
+          stage.position({
+            x: stage.x() + dx,
+            y: stage.y() + dy,
+          });
+          stage.batchDraw();
+        }
+        lastDist = dist;
+        lastCenter = center;
+      }
+    });
+
+    // Dynamically render the landmark palette for better separation and maintainability
+    const landmarkPalette = document.getElementById('landmark-palette');
+    const landmarkIcons = [
+      { type: 'house', icon: '🏠', label: 'Home' },
+      { type: 'tree', icon: '🌳', label: 'Landmark' },
+      { type: 'building', icon: '🏢', label: 'Building' },
+      { type: 'hospital', icon: '🏥', label: 'Hospital' },
+      { type: 'police', icon: '🚓', label: 'Police' },
+      { type: 'cafe', icon: '☕', label: 'Cafe' },
+      { type: 'pool', icon: '🏊', label: 'Pool' },
+      { type: 'school', icon: '🏫', label: 'School' },
+      { type: 'toilet', icon: '🚻', label: 'Toilet' },
+      { type: 'villa', icon: '🏡', label: 'Villa' },
+      { type: 'apartment', icon: '🏬', label: 'Apartment' },
+      { type: 'shop', icon: '🏪', label: 'Shop' },
+      { type: 'church', icon: '⛪', label: 'Church' },
+      { type: 'mosque', icon: '🕌', label: 'Mosque' },
+      { type: 'synagogue', icon: '🕍', label: 'Synagogue' },
+      { type: 'bank', icon: '🏦', label: 'Bank' },
+      { type: 'fire', icon: '🚒', label: 'Fire' },
+      { type: 'pharmacy', icon: '💊', label: 'Pharmacy' },
+      { type: 'restaurant', icon: '🍽️', label: 'Restaurant' },
+      { type: 'parking', icon: '🅿️', label: 'Parking' },
+    ];
+    landmarkPalette.innerHTML = landmarkIcons.map(lm =>
+      `<div class="asset-item" tabindex="0" draggable="true" data-type="${lm.type}">
+        <span class="asset-icon">${lm.icon}</span>
+        <span>${lm.label}</span>
+      </div>`
+    ).join('');
+
+    // Update labels on dragmove
+    landmarkLayer.on('dragmove', updateLandmarkLabels);
+    // Initial call in case of reload
+    updateLandmarkLabels();
+
+    // Theme color palettes
+    const uiThemes = {
+      classic: {
+        '--bg-gradient': 'linear-gradient(135deg, #fefae0 0%, #faedcd 100%)',
+        '--glass-bg': 'rgba(255,255,255,0.75)',
+        '--glass-border': 'rgba(212,163,115,0.18)',
+        '--glass-blur': '12px',
+        '--primary': '#d4a373',
+        '--accent': '#b08968',
+        '--button-glow': '0 0 16px #d4a37388, 0 2px 8px #b08968cc',
+        '--text': '#3c2f2f',
+        '--text-muted': '#b08968',
+        '--icon-bg': 'rgba(212,163,115,0.08)',
+        '--icon-hover': '#b08968',
+      },
+      night: {
+        '--bg-gradient': 'linear-gradient(135deg, #232946 0%, #181c2a 100%)',
+        '--glass-bg': 'rgba(36, 41, 61, 0.65)',
+        '--glass-border': 'rgba(255,255,255,0.12)',
+        '--glass-blur': '18px',
+        '--primary': '#a3bffa',
+        '--accent': '#f6c177',
+        '--button-glow': '0 0 16px #f6c17788, 0 2px 8px #232946cc',
+        '--text': '#f7f7fa',
+        '--text-muted': '#bfc6e0',
+        '--icon-bg': 'rgba(255,255,255,0.08)',
+        '--icon-hover': '#f6c177',
+      }
+    };
+    function setUITheme(theme) {
+      const vars = uiThemes[theme] || uiThemes.night;
+      for (const key in vars) {
+        document.documentElement.style.setProperty(key, vars[key]);
+      }
+    }
+    // Set default theme
+    setUITheme('night');
+    // Listen for theme change
+    document.addEventListener('DOMContentLoaded', function () {
+      const themeSelect = document.getElementById('theme-select');
+      if (themeSelect) {
+        themeSelect.addEventListener('change', function (e) {
+          setUITheme(e.target.value);
+        });
+      }
+    });
+
+    const bgImg = new window.Image();
+    bgImg.src = 'Assets/bg1.png';
+    bgImg.onload = () => {
+      const bg = new Konva.Image({
+        image: bgImg,
+        width: stage.width(),
+        height: stage.height(),
+        opacity: 1,
+      });
+
+      // Add the image below everything else
+      backgroundLayer.add(bg);
+      bg.moveToBottom();
+
+      // Optional: hide the background rect if image is present
+      bgRect.visible(false);
+
+      backgroundLayer.draw();
+    };
+
+    // Add a custom landmark icon
+    // const iconImg = new window.Image();
+    // iconImg.src = 'assets/landmark-hotel.png';
+    // iconImg.onload = () => {
+    //   const icon = new Konva.Image({
+    //     image: iconImg,
+    //     x: 200,
+    //     y: 300,
+    //     width: 80,
+    //     height: 80,
+    //     draggable: true
+    //   });
+    //   landmarkLayer.add(icon);
+    //   stage.add(landmarkLayer);
+    // };
+
+    document.getElementById('simulate-route').onclick = function () {
+      // Remove previous simulated route if any
+      if (window.simLine) {
+        window.simLine.destroy();
+        window.simLine = null;
+      }
+
+      // Set a simulated GPS origin
+      gpsOrigin = { lat: 28.6139, lng: 77.2090 }; // Example: New Delhi
+      // Define a simulated route (array of lat/lng)
+      const simRoute = [
+        { lat: 28.6139, lng: 77.2090 },
+        { lat: 28.6145, lng: 77.2100 },
+        { lat: 28.6150, lng: 77.2110 },
+        { lat: 28.6155, lng: 77.2120 },
+        { lat: 28.6160, lng: 77.2130 }
+      ];
+
+      // Convert lat/lng to canvas points
+      const simPoints = [];
+      simRoute.forEach(pt => {
+        const canvasPt = latLngToCanvas(pt.lat, pt.lng);
+        console.log('Simulated point:', canvasPt); // Debug: log the points
+        simPoints.push(canvasPt.x, canvasPt.y);
+      });
+
+      // Draw the simulated route
+      window.simLine = new Konva.Line({
+        stroke: '#ff0000', // bright red for visibility
+        strokeWidth: 8,
+        points: simPoints,
+        lineCap: 'round',
+        lineJoin: 'round',
+        dash: [16, 8] // Dashed line for simulation
+      });
+      roadLayer.add(window.simLine);
+      roadLayer.draw();
+    };
+
+    // --- Long-press to edit place label on marker (mobile) ---
+    if (isMobile()) {
+      let longPressTimer = null;
+      let longPressTarget = null;
+      landmarkLayer.on('touchstart', function (e) {
+        if (e.target.className === 'Text') {
+          longPressTarget = e.target;
+          longPressTimer = setTimeout(() => {
+            showLandmarkPopup(longPressTarget);
+            longPressTarget = null;
+          }, 500); // 500ms for long-press
+        }
+      });
+      landmarkLayer.on('touchend touchmove', function (e) {
+        if (longPressTimer) {
+          clearTimeout(longPressTimer);
+          longPressTimer = null;
+          longPressTarget = null;
+        }
+      });
+      // Also allow single tap to open popup for editing
+      landmarkLayer.on('tap', function (e) {
+        if (e.target.className === 'Text') {
+          showLandmarkPopup(e.target);
+        }
+      });
+      // When dragging a landmark, disable stage dragging to avoid conflicts
+      landmarkLayer.on('dragstart', function (e) {
+        if (e.target.className === 'Text') {
+          stage.draggable(false);
+        }
+      });
+      landmarkLayer.on('dragend', function (e) {
+        if (e.target.className === 'Text') {
+          stage.draggable(false); // keep stage not draggable after drag
+        }
+      });
+    }
+
+    // --- Map Name Edit Popup ---
+    let mapNamePopup = null;
+    function showMapNamePopup() {
+      if (mapNamePopup) mapNamePopup.remove();
+      // Center the popup
+      const x = window.innerWidth / 2 - 160;
+      const y = window.innerHeight / 2 - 80;
+      mapNamePopup = document.createElement('div');
+      mapNamePopup.className = 'landmark-popup';
+      mapNamePopup.style.left = x + 'px';
+      mapNamePopup.style.top = y + 'px';
+      mapNamePopup.style.maxWidth = '320px';
+      mapNamePopup.style.minWidth = '220px';
+      mapNamePopup.innerHTML = `
+        <div class="landmark-popup-title">Edit Map Name</div>
+        <input id="map-name-input" class="landmark-popup-input" type="text" value="${mapName}" placeholder="Enter map name..." />
+        <div class="landmark-popup-actions">
+          <button id="map-name-save" class="landmark-popup-btn save">Save</button>
+          <button id="map-name-cancel" class="landmark-popup-btn cancel">Cancel</button>
+        </div>
+      `;
+      document.body.appendChild(mapNamePopup);
+      document.getElementById('map-name-input').focus();
+      document.getElementById('map-name-save').onclick = function () {
+        const val = document.getElementById('map-name-input').value.trim();
+        if (val) {
+          mapName = val;
+          simpleText.text(mapName);
+          layer.batchDraw();
+        }
+        closeMapNamePopup();
+      };
+      document.getElementById('map-name-cancel').onclick = closeMapNamePopup;
+      setTimeout(() => {
+        window.addEventListener('mousedown', outsideMapNamePopupClick);
+        window.addEventListener('touchstart', outsideMapNamePopupClick);
+      }, 0);
+    }
+    function closeMapNamePopup() {
+      if (mapNamePopup) mapNamePopup.remove();
+      mapNamePopup = null;
+      window.removeEventListener('mousedown', outsideMapNamePopupClick);
+      window.removeEventListener('touchstart', outsideMapNamePopupClick);
+    }
+    function outsideMapNamePopupClick(e) {
+      if (mapNamePopup && !mapNamePopup.contains(e.target)) closeMapNamePopup();
+    }
+    // Make map name editable on click
+    simpleText.on('click tap', showMapNamePopup);
+    // Optionally: show pointer cursor
+    simpleText.on('mouseenter', function () {
+      stage.container().style.cursor = 'pointer';
+    });
+    simpleText.on('mouseleave', function () {
+      stage.container().style.cursor = '';
+    });
+
+    // Add save functionality
+    document.getElementById('save-map').addEventListener('click', () => {
+      document.getElementById('login-modal').style.display = 'flex';
+    });
+
+    document.getElementById('close-modal').addEventListener('click', () => {
+      document.getElementById('login-modal').style.display = 'none';
+    });
+
+    document.getElementById('login-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const username = document.getElementById('username').value;
+      const password = document.getElementById('password').value;
+
+      try {
+        // Gather full map data (same as export)
+        const roads = [];
+        roadLayer.getChildren().forEach(line => {
+          if (line.className === 'Line') {
+            const pts = line.points();
+            const arr = [];
+            const origin = gpsOrigin || { lat: 28.6139, lng: 77.2090 };
+            for (let i = 0; i < pts.length; i += 2) {
+              const x = pts[i];
+              const y = pts[i + 1];
+              const lng = ((x - width / 2) / gpsScale) + origin.lng;
+              const lat = origin.lat - ((y - height / 2) / gpsScale);
+              arr.push({ lat, lng });
+            }
+            roads.push({ points: arr });
+          }
+        });
+        const landmarks = [];
+        landmarkLayer.getChildren().forEach(lm => {
+          if (lm.className === 'Text') {
+            let type = null;
+            for (const key in landmarkEmojis) {
+              if (landmarkEmojis[key] === lm.text()) type = key;
+            }
+            let lat = null, lng = null;
+            if (gpsOrigin) {
+              const x = lm.x() + 16;
+              const y = lm.y() + 16;
+              lng = ((x - width / 2) / gpsScale) + gpsOrigin.lng;
+              lat = gpsOrigin.lat - ((y - height / 2) / gpsScale);
+            }
+            landmarks.push({ type, lat, lng });
+          }
+        });
+        const icons = [];
+        landmarkLayer.getChildren().forEach(node => {
+          if (node.className === 'Image' && node.image()) {
+            icons.push({
+              type: node.getAttr('type') || '',
+              x: node.x(),
+              y: node.y(),
+              width: node.width(),
+              height: node.height(),
+              src: node.image().src
+            });
+          } else if (node.className === 'Text') {
+            const canvas = document.createElement('canvas');
+            canvas.width = 40;
+            canvas.height = 40;
+            const ctx = canvas.getContext('2d');
+            ctx.font = '32px Poppins, Segoe UI, Arial, sans-serif';
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            ctx.fillText(node.text(), 20, 20);
+            const dataUrl = canvas.toDataURL('image/png');
+            icons.push({
+              type: (() => {
+                for (const key in landmarkEmojis) {
+                  if (landmarkEmojis[key] === node.text()) return key;
+                }
+                return '';
+              })(),
+              x: node.x(),
+              y: node.y(),
+              width: 32,
+              height: 32,
+              src: dataUrl
+            });
+          }
+        });
+        let bgDataUrl = null;
+        if (bgImg && bgImg.complete && bgImg.naturalWidth > 0) {
+          bgDataUrl = imageToDataURL(bgImg);
+        }
+        let iconDataUrl = null;
+        if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
+          iconDataUrl = imageToDataURL(iconImg);
+        }
+        const mapData = {
+          name: mapName,
+          gpsOrigin: gpsOrigin || { lat: 28.6139, lng: 77.2090 },
+          gpsScale,
+          roads,
+          landmarks,
+          icons,
+          assets: {
+            background: bgDataUrl,
+            landmarkHotel: iconDataUrl
+          },
+          createdBy: username,
+          createdAt: new Date().toISOString()
+        };
+
+        // Download as JSON (no localStorage)
+        const blob = new Blob([JSON.stringify(mapData, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = (mapName ? mapName.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'property-map') + '.json';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        alert('Map downloaded successfully!');
+        document.getElementById('login-modal').style.display = 'none';
+      } catch (error) {
+        alert('Error saving map: ' + error.message);
+      }
+    });
+  </script>
+</body>
+
+</html>

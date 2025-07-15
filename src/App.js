@@ -9,6 +9,8 @@ import { GoogleOAuthProvider } from '@react-oauth/google';
 import MapViewer from './pages/MapViewer';
 import HomePage from './components/HomePage';
 import Home2 from './pages/Home2';
+import DrawMap from './pages/DrawMap';
+import { ThemeProvider } from './components/ThemeContext';
 
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 
@@ -20,6 +22,7 @@ function ProtectedRoute({ children }) {
 function App() {
   return (
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
+      <ThemeProvider>
       <Router>
         <Routes>
           <Route path="/" element={<HomePage />} />
@@ -29,8 +32,10 @@ function App() {
           <Route path="/dashboard" element={<Dashboard />} />
           <Route path="/map/:id" element={<MapViewer />} />
           <Route path="/home2" element={<Home2 />} />
+            <Route path="/drawMap" element={<DrawMap />} />
         </Routes>
       </Router>
+      </ThemeProvider>
     </GoogleOAuthProvider>
   );
 }
