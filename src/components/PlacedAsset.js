@@ -133,6 +133,12 @@ const PlacedAsset = ({
     { dir: 'se', x: width, y: height },
   ];
 
+  // Helper: handle selection only if not dragging or resizing
+  const handleSelect = (e) => {
+    if (dragging || resizing) return;
+    if (onSelect) onSelect(e);
+  };
+
   return (
     // Group wraps the asset and all controls, and is draggable only when dragging
     <Group
@@ -142,9 +148,9 @@ const PlacedAsset = ({
       draggable={dragging}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
-      onClick={onSelect}
-      onTap={onSelect}
-      onTouchStart={onSelect}
+      onClick={handleSelect} // desktop
+      onTap={handleSelect}   // mobile (Konva synthetic)
+      onPointerDown={handleSelect} // fallback for pointer events
     >
       {/* Show border if selected */}
       {selected && (
