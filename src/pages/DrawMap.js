@@ -139,9 +139,19 @@ const DrawMap = () => {
   const openLabelPopup = (idx) => setSelectedLandmark(idx);
   // Close label editor
   const closeLabelPopup = () => setSelectedLandmark(null);
-  // Update label for a landmark
-  const updateLandmarkLabel = (idx, label) => {
-    setLandmarks(landmarks => landmarks.map((lm, i) => i === idx ? { ...lm, label } : lm));
+  // Add local state for label input
+  const [labelInput, setLabelInput] = useState("");
+
+  // When opening label popup, set labelInput to current label
+  useEffect(() => {
+    if (selectedLandmark !== null) {
+      setLabelInput(landmarks[selectedLandmark]?.label || "");
+    }
+  }, [selectedLandmark, landmarks]);
+
+  // Update label for a landmark (only on Save)
+  const saveLandmarkLabel = (idx) => {
+    setLandmarks(landmarks => landmarks.map((lm, i) => i === idx ? { ...lm, label: labelInput } : lm));
     closeLabelPopup();
   };
   // Delete a landmark
@@ -411,6 +421,27 @@ const DrawMap = () => {
                 {bgImageObj && (
                   <KonvaImage image={bgImageObj} x={0} y={0} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} />
                 )}
+                {/* Canvas Scale Reference (bottom left) */}
+                {/* 100 meters scale bar, adjust gpsScale if needed */}
+                <Group x={30} y={CANVAS_HEIGHT - 40}>
+                  <Line
+                    points={[0, 0, 100, 0]}
+                    stroke="#fff"
+                    strokeWidth={4}
+                    shadowBlur={2}
+                    shadowColor="#232946"
+                  />
+                  <Text
+                    text="100 m"
+                    x={0}
+                    y={8}
+                    fontSize={16}
+                    fill="#fff"
+                    fontStyle="bold"
+                    shadowColor="#232946"
+                    shadowBlur={2}
+                  />
+                </Group>
                 {/* Editable Map Name */}
                 <Text
                   text={mapName}
@@ -470,12 +501,12 @@ const DrawMap = () => {
             <input
               className="w-full p-2 rounded border mb-2"
               type="text"
-              value={landmarks[selectedLandmark]?.label || ''}
-              onChange={e => updateLandmarkLabel(selectedLandmark, e.target.value)}
+              value={labelInput}
+              onChange={e => setLabelInput(e.target.value)}
               placeholder="Enter name or description..."
             />
             <div className="flex gap-2 justify-end">
-              <button className="btn" onClick={() => updateLandmarkLabel(selectedLandmark, landmarks[selectedLandmark]?.label || '')}>Save</button>
+              <button className="btn" onClick={() => saveLandmarkLabel(selectedLandmark)}>Save</button>
               <button className="btn" onClick={closeLabelPopup}>Cancel</button>
               <button className="btn text-red-600" onClick={() => deleteLandmark(selectedLandmark)}>Delete</button>
             </div>

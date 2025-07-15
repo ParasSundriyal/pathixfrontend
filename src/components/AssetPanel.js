@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import PropTypes from 'prop-types';
 
 /**
@@ -9,11 +9,24 @@ import PropTypes from 'prop-types';
  * - Modern, card-like style inspired by Demo.html.
  */
 const AssetPanel = ({ assets, onDragStart }) => {
+  const [search, setSearch] = useState("");
+  const filteredAssets = assets.filter(
+    asset =>
+      asset.name.toLowerCase().includes(search.toLowerCase()) ||
+      (asset.icon && asset.icon.toLowerCase().includes(search.toLowerCase()))
+  );
   return (
     <aside className="w-full md:w-72 max-h-[40vh] md:max-h-[70vh] overflow-y-auto p-2 md:p-4">
       <div className="text-lg font-semibold text-blue-200 mb-4 ml-1">Assets</div>
+      <input
+        type="text"
+        placeholder="Search assets..."
+        value={search}
+        onChange={e => setSearch(e.target.value)}
+        className="w-full mb-3 p-2 rounded bg-white/20 dark:bg-gray-700/40 text-blue-900 dark:text-blue-100 text-xs outline-none"
+      />
       <div className="grid grid-cols-3 md:grid-cols-1 gap-3">
-        {assets.map((asset, idx) => (
+        {filteredAssets.map((asset, idx) => (
           <div
             key={asset.name + idx}
             className="flex flex-col items-center gap-1 p-3 rounded-xl bg-white/10 dark:bg-gray-700/60 hover:bg-blue-100/20 dark:hover:bg-blue-900/30 cursor-pointer shadow"

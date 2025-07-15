@@ -11,7 +11,7 @@
 //   onResize: function - called when asset is resized
 //   stageScale: number - current canvas scale (for future use)
 //
-import React, { useRef, useState } from 'react';
+import React, { useRef, useState, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
 import { Group, Rect, Text, Image as KonvaImage } from 'react-konva';
 
@@ -41,18 +41,26 @@ const PlacedAsset = ({
   const [dragging, setDragging] = useState(false); // Track if asset is being dragged
   const [resizing, setResizing] = useState(false); // Track if asset is being resized
   const [resizeDir, setResizeDir] = useState(null); // Which corner is being resized
+  const wasDraggedOrResized = useRef(false);
 
   // Asset size (default to 48x48 if not specified)
   const width = asset.width || 48;
   const height = asset.height || 48;
 
+  // Store latest values in refs for use in global handlers
+  const assetRef = useRef(asset);
+  const widthRef = useRef(width);
+  const heightRef = useRef(height);
+  const resizeDirRef = useRef(resizeDir);
+  const resizingRef = useRef(resizing);
+
+  useEffect(() => { assetRef.current = asset; }, [asset]);
+  useEffect(() => { widthRef.current = width; }, [width]);
+  useEffect(() => { heightRef.current = height; }, [height]);
+  useEffect(() => { resizeDirRef.current = resizeDir; }, [resizeDir]);
+  useEffect(() => { resizingRef.current = resizing; }, [resizing]);
+
   // Handler for drag end: update asset position and stop dragging
-  const handleDragMove = (e) => {
-    if (onDrag) {
-      const { x, y } = e.target.position();
-      onDrag({ ...asset, x, y });
-    }
-  };
   const handleDragEnd = (e) => {
     setDragging(false);
     if (onDragEnd) onDragEnd();
@@ -70,44 +78,70 @@ const PlacedAsset = ({
 
   // Handlers for resizing logic
   // Start resizing from a given corner
-  const handleResizeStart = (dir) => {
+  const handleResizeStart = (dir, e) => {
     setResizing(true);
     setResizeDir(dir);
+    // Prevent default to avoid unwanted selection
+    if (e && e.evt) e.evt.preventDefault && e.evt.preventDefault();
+    // Add global listeners
+    window.addEventListener('mousemove', handleResizeMoveGlobal);
+    window.addEventListener('touchmove', handleResizeMoveGlobal, { passive: false });
+    window.addEventListener('mouseup', handleResizeEndGlobal);
+    window.addEventListener('touchend', handleResizeEndGlobal);
   };
-  // While resizing, update width/height and position
-  const handleResizeMove = (e) => {
-    if (!resizing || !resizeDir) return;
-    const pointer = e.target.getStage().getPointerPosition();
-    let newWidth = width;
-    let newHeight = height;
-    let newX = asset.x;
-    let newY = asset.y;
-    if (resizeDir === 'se') {
-      newWidth = Math.max(MIN_SIZE, pointer.x - asset.x);
-      newHeight = Math.max(MIN_SIZE, pointer.y - asset.y);
-    } else if (resizeDir === 'ne') {
-      newWidth = Math.max(MIN_SIZE, pointer.x - asset.x);
-      newHeight = Math.max(MIN_SIZE, asset.y + height - pointer.y);
+
+  // Global move handler (defined once)
+  const handleResizeMoveGlobal = useCallback((event) => {
+    wasDraggedOrResized.current = true;
+    if (!resizingRef.current || !resizeDirRef.current) return;
+    let pointer;
+    const stage = groupRef.current.getStage();
+    pointer = stage.getPointerPosition();
+    let newWidth = widthRef.current;
+    let newHeight = heightRef.current;
+    let newX = assetRef.current.x;
+    let newY = assetRef.current.y;
+    if (resizeDirRef.current === 'se') {
+      newWidth = Math.max(MIN_SIZE, pointer.x - assetRef.current.x);
+      newHeight = Math.max(MIN_SIZE, pointer.y - assetRef.current.y);
+    } else if (resizeDirRef.current === 'ne') {
+      newWidth = Math.max(MIN_SIZE, pointer.x - assetRef.current.x);
+      newHeight = Math.max(MIN_SIZE, assetRef.current.y + heightRef.current - pointer.y);
       newY = pointer.y;
-    } else if (resizeDir === 'sw') {
-      newWidth = Math.max(MIN_SIZE, asset.x + width - pointer.x);
-      newHeight = Math.max(MIN_SIZE, pointer.y - asset.y);
+    } else if (resizeDirRef.current === 'sw') {
+      newWidth = Math.max(MIN_SIZE, assetRef.current.x + widthRef.current - pointer.x);
+      newHeight = Math.max(MIN_SIZE, pointer.y - assetRef.current.y);
       newX = pointer.x;
-    } else if (resizeDir === 'nw') {
-      newWidth = Math.max(MIN_SIZE, asset.x + width - pointer.x);
-      newHeight = Math.max(MIN_SIZE, asset.y + height - pointer.y);
+    } else if (resizeDirRef.current === 'nw') {
+      newWidth = Math.max(MIN_SIZE, assetRef.current.x + widthRef.current - pointer.x);
+      newHeight = Math.max(MIN_SIZE, assetRef.current.y + heightRef.current - pointer.y);
       newX = pointer.x;
       newY = pointer.y;
     }
     if (onResize) {
-      onResize({ ...asset, x: newX, y: newY, width: newWidth, height: newHeight });
+      onResize({ ...assetRef.current, x: newX, y: newY, width: newWidth, height: newHeight });
     }
-  };
-  // End resizing
-  const handleResizeEnd = () => {
+  }, [onResize]);
+
+  // Global end handler (defined once)
+  const handleResizeEndGlobal = useCallback(() => {
     setResizing(false);
     setResizeDir(null);
-  };
+    window.removeEventListener('mousemove', handleResizeMoveGlobal);
+    window.removeEventListener('touchmove', handleResizeMoveGlobal);
+    window.removeEventListener('mouseup', handleResizeEndGlobal);
+    window.removeEventListener('touchend', handleResizeEndGlobal);
+  }, [handleResizeMoveGlobal]);
+
+  // Clean up listeners on unmount
+  useEffect(() => {
+    return () => {
+      window.removeEventListener('mousemove', handleResizeMoveGlobal);
+      window.removeEventListener('touchmove', handleResizeMoveGlobal);
+      window.removeEventListener('mouseup', handleResizeEndGlobal);
+      window.removeEventListener('touchend', handleResizeEndGlobal);
+    };
+  }, [handleResizeMoveGlobal, handleResizeEndGlobal]);
 
   // Menu button positions (distribute around asset)
   // Edit: top-right, Delete: top-left, Drag: bottom-center
@@ -133,10 +167,31 @@ const PlacedAsset = ({
     { dir: 'se', x: width, y: height },
   ];
 
-  // Helper: handle selection only if not dragging or resizing
+  // Helper: handle selection only if not dragging or resizing (for click/tap)
   const handleSelect = (e) => {
     if (dragging || resizing) return;
     if (onSelect) onSelect(e);
+  };
+
+  // On touch start, reset drag/resize tracker
+  const handleTouchStart = (e) => {
+    wasDraggedOrResized.current = false;
+  };
+
+  // On drag or resize, set tracker
+  const handleDragMove = (e) => {
+    wasDraggedOrResized.current = true;
+    if (onDrag) {
+      const { x, y } = e.target.position();
+      onDrag({ ...asset, x, y });
+    }
+  };
+
+  // On touch end, select only if not dragged or resized
+  const handleTouchEnd = (e) => {
+    if (!wasDraggedOrResized.current && !dragging && !resizing) {
+      if (onSelect) onSelect(e);
+    }
   };
 
   return (
@@ -151,6 +206,8 @@ const PlacedAsset = ({
       onClick={handleSelect} // desktop
       onTap={handleSelect}   // mobile (Konva synthetic)
       onPointerDown={handleSelect} // fallback for pointer events
+      onTouchStart={handleTouchStart}
+      onTouchEnd={handleTouchEnd}
     >
       {/* Show border if selected */}
       {selected && (
@@ -167,8 +224,20 @@ const PlacedAsset = ({
       )}
       {/* Render the asset icon/image */}
       {renderIcon()}
-      {/* Asset name below icon */}
-      <Text text={asset.name} y={height + 4} width={width} align="center" fontSize={14} fill="#fff" />
+      {/* Show label below icon if present */}
+      {asset.label && (
+        <Text
+          text={asset.label}
+          y={height + 4}
+          width={width}
+          align="center"
+          fontSize={16}
+          fill="#fff"
+          fontStyle="bold"
+          shadowColor="#232946"
+          shadowBlur={2}
+        />
+      )}
       {/* Menu (edit, delete, drag handle) - only if selected, distributed around asset */}
       {selected && (
         <>
@@ -208,12 +277,8 @@ const PlacedAsset = ({
           strokeWidth={2}
           cornerRadius={9}
           draggable={false}
-          onMouseDown={() => handleResizeStart(h.dir)}
-          onTouchStart={() => handleResizeStart(h.dir)}
-          onMouseMove={handleResizeMove}
-          onTouchMove={handleResizeMove}
-          onMouseUp={handleResizeEnd}
-          onTouchEnd={handleResizeEnd}
+          onMouseDown={e => handleResizeStart(h.dir, e)}
+          onTouchStart={e => handleResizeStart(h.dir, e)}
         />
       ))}
     </Group>
