@@ -198,8 +198,8 @@ const PlacedAsset = ({
     // Group wraps the asset and all controls, and is draggable only when dragging
     <Group
       ref={groupRef}
-      x={asset.x}
-      y={asset.y}
+      x={asset.x - width / 2}
+      y={asset.y - height / 2}
       draggable={dragging}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}

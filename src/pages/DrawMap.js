@@ -56,6 +56,12 @@ class SimpleKalmanFilter {
 }
 
 const DrawMap = () => {
+  // Tool mode: 'pointer', 'grab', or 'point'
+  const [toolMode, setToolMode] = useState('pointer');
+  // Store original asset data for restoring after point tool
+  const [originalLandmarks, setOriginalLandmarks] = useState([]);
+  // State for pointer position while placing asset
+  const [pointerPos, setPointerPos] = useState(null);
   // Theme context for background image/colors
   const { currentTheme } = useTheme();
   // Map name and editing state
@@ -91,15 +97,40 @@ const DrawMap = () => {
   const [pendingAsset, setPendingAsset] = useState(null); // asset to place
   const [selectedAssetIdx, setSelectedAssetIdx] = useState(null);
 
-  // Add state for interaction mode: 'pointer' or 'grab'
-  const [interactionMode, setInteractionMode] = useState('pointer'); // 'pointer' or 'grab'
-
   // Add state to track if any asset is being dragged
   const [assetDragging, setAssetDragging] = useState(false);
 
-  // Handler to toggle interaction mode
-  const toggleInteractionMode = () => {
-    setInteractionMode(mode => (mode === 'pointer' ? 'grab' : 'pointer'));
+  // Handler to toggle pointer/grab (independent of point tool)
+  const togglePointerPan = () => {
+    if (toolMode === 'grab') {
+      setToolMode('pointer');
+    } else if (toolMode === 'pointer') {
+      setToolMode('grab');
+    } else if (toolMode === 'point') {
+      // If point tool is active, do not toggle pointer/pan
+      // Optionally, you can allow switching, but for now, keep point tool exclusive
+      return;
+    }
+  };
+
+  // Handler to toggle point tool and convert all assets to points, restore on toggle off
+  const activatePointTool = () => {
+    if (toolMode === 'point') {
+      // Restore original icons, width, height
+      setLandmarks(originalLandmarks.length ? originalLandmarks : (lm => lm));
+      setToolMode('pointer');
+    } else {
+      // Save current state for restoration
+      setOriginalLandmarks(landmarks.map(lm => ({ ...lm })));
+      // Convert all existing assets to points
+      setLandmarks(landmarks => landmarks.map(lm => ({
+        ...lm,
+        width: 18,
+        height: 18,
+        icon: '☩', // Use a dot, or change to any icon you want
+      })));
+      setToolMode('point');
+    }
   };
 
   // Utility: Convert lat/lng to canvas coordinates based on origin
@@ -187,8 +218,20 @@ const DrawMap = () => {
       const pointer = stage.getPointerPosition();
       let x = pointer ? pointer.x : CANVAS_WIDTH / 2;
       let y = pointer ? pointer.y : CANVAS_HEIGHT / 2;
-      let assetToPlace = { ...pendingAsset, x, y, width: 48, height: 48 };
-      // If icon is image, load it
+      let assetToPlace;
+      if (toolMode === 'point') {
+        // Place as a point (small dot or special icon)
+        assetToPlace = {
+          ...pendingAsset,
+          x,
+          y,
+          width: 18,
+          height: 18,
+          icon: '+', // Use a dot, or change to any icon you want
+        };
+      } else {
+        assetToPlace = { ...pendingAsset, x, y, width: 48, height: 48 };
+      }
       if (assetToPlace.icon && assetToPlace.icon.startsWith('http')) {
         const img = new window.Image();
         img.src = assetToPlace.icon;
@@ -200,6 +243,7 @@ const DrawMap = () => {
         setLandmarks((prev) => [...prev, assetToPlace]);
       }
       setPendingAsset(null);
+      setPointerPos(null);
     } else {
       // On mobile, only unselect if not near any asset
       const stage = stageRef.current.getStage();
@@ -211,6 +255,22 @@ const DrawMap = () => {
       } else {
         setSelectedAssetIdx(null);
       }
+    }
+  };
+
+  // Track pointer position for marker while placing asset
+  const handleStageMouseMove = (e) => {
+    if (pendingAsset && stageRef.current) {
+      const stage = stageRef.current.getStage();
+      const pointer = stage.getPointerPosition();
+      setPointerPos(pointer);
+    }
+  };
+  const handleStageTouchMove = (e) => {
+    if (pendingAsset && stageRef.current) {
+      const stage = stageRef.current.getStage();
+      const pointer = stage.getPointerPosition();
+      setPointerPos(pointer);
     }
   };
 
@@ -319,12 +379,18 @@ const DrawMap = () => {
     setStagePos({ x: e.target.x(), y: e.target.y() });
   };
 
+  // Export menu state
+  const [showExportMenu, setShowExportMenu] = useState(false);
+  const [qrLink, setQrLink] = useState('');
+  const [showQR, setShowQR] = useState(false);
+
   // Export map data as JSON
-  const handleExport = () => {
+  const handleExportJSON = () => {
     const data = {
       name: mapName,
       gpsPath,
       landmarks,
+      theme: currentTheme,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -335,8 +401,47 @@ const DrawMap = () => {
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
+    setShowExportMenu(false);
   };
-  const handleSave = () => setShowLogin(true);
+
+  // Export map as image
+  const handleExportImage = () => {
+    if (stageRef.current) {
+      const dataURL = stageRef.current.toDataURL({ pixelRatio: 2 });
+      const a = document.createElement('a');
+      a.href = dataURL;
+      a.download = (mapName ? mapName.replace(/[^a-z0-9]/gi, '_').toLowerCase() : 'property-map') + '.png';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+    setShowExportMenu(false);
+  };
+
+  // Export map as QR
+  const handleExportQR = async () => {
+    const data = {
+      name: mapName,
+      gpsPath,
+      landmarks,
+      theme: currentTheme?._id,
+    };
+    try {
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/api/maps/export`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      const result = await response.json();
+      if (result.link) {
+        setQrLink(result.link);
+        setShowQR(true);
+      }
+    } catch (err) {
+      alert('Failed to export map as QR.');
+    }
+    setShowExportMenu(false);
+  };
 
   // Get assets from theme (emoji or image)
   const assets = currentTheme?.assets?.length
@@ -365,23 +470,42 @@ const DrawMap = () => {
           <div className="toolbar flex flex-wrap items-center gap-3 mb-4 w-full justify-center">
             <label className="font-semibold text-blue-100 font-sans">Theme:</label>
             <ThemeSwitcher />
-            {/* Pointer/Grab toggle button */}
+            {/* Pointer/Grab icon button */}
             <button
-              className={`rounded-xl py-2 px-5 font-bold shadow-lg transition focus:outline-none focus:ring-2 focus:ring-blue-400 flex items-center gap-2 ${interactionMode === 'pointer' ? 'bg-blue-500 text-white' : 'bg-yellow-500 text-black'}`}
-              onClick={toggleInteractionMode}
-              title={interactionMode === 'pointer' ? 'Switch to Pan Mode' : 'Switch to Select Mode'}
+              className={`rounded-full w-12 h-12 flex items-center justify-center text-2xl shadow-lg transition focus:outline-none focus:ring-2 focus:ring-blue-400 ${toolMode === 'grab' ? 'bg-yellow-500 text-black' : 'bg-blue-500 text-white'}`}
+              onClick={togglePointerPan}
+              title={toolMode === 'grab' ? 'Pan Tool' : 'Pointer Tool'}
               type="button"
             >
-              {interactionMode === 'pointer' ? (
-                <span role="img" aria-label="Pointer" className="text-xl">🖱️</span>
+              {toolMode === 'grab' ? (
+                <span role="img" aria-label="Hand">🤚</span>
               ) : (
-                <span role="img" aria-label="Hand" className="text-xl">🤚</span>
+                <span role="img" aria-label="Pointer">🖱️</span>
               )}
-              {interactionMode === 'pointer' ? 'Pointer' : 'Pan'}
+            </button>
+            {/* Point Tool icon button */}
+            <button
+              className={`rounded-full w-12 h-12 flex items-center justify-center text-2xl shadow-lg transition focus:outline-none focus:ring-2 focus:ring-blue-400 ${toolMode === 'point' ? 'bg-pink-500 text-white' : 'bg-gray-200 text-gray-700'}`}
+              onClick={activatePointTool}
+              title="Point Tool"
+              type="button"
+            >
+              <span role="img" aria-label="Point">📍</span>
             </button>
             <button className="rounded-xl bg-blue-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" onClick={handleStartGps} disabled={gpsTracking}>Start GPS Tracking</button>
             <button className="rounded-xl bg-blue-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" onClick={handleStopGps} disabled={!gpsTracking}>Stop GPS Tracking</button>
-            <button className="rounded-xl bg-blue-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" onClick={handleExport}>Export Map</button>
+            <div className="relative inline-block">
+              <button className="rounded-xl bg-blue-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" onClick={() => setShowExportMenu(v => !v)}>
+                Export
+              </button>
+              {showExportMenu && (
+                <div className="absolute z-10 right-0 mt-2 w-48 bg-white dark:bg-gray-900 rounded shadow-lg border border-gray-200 dark:border-gray-700">
+                  <button className="block w-full text-left px-4 py-2 hover:bg-blue-100 dark:hover:bg-gray-800" onClick={handleExportImage}>Save as Image</button>
+                  <button className="block w-full text-left px-4 py-2 hover:bg-blue-100 dark:hover:bg-gray-800" onClick={handleExportJSON}>Export as JSON</button>
+                  <button className="block w-full text-left px-4 py-2 hover:bg-blue-100 dark:hover:bg-gray-800" onClick={handleExportQR}>Create QR</button>
+                </div>
+              )}
+            </div>
             <button className="rounded-xl bg-blue-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" onClick={handleSimulateRoute}>Simulate Route</button>
             <button className="rounded-xl bg-red-500 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-400" onClick={handleReset}>Reset</button>
             <div className={`gps-status flex items-center gap-1 ml-2 px-3 py-1 rounded-full bg-white/10 text-xs font-semibold ${gpsStatus === 'ON' ? 'text-green-400' : gpsStatus === 'SIM' ? 'text-yellow-400' : 'text-gray-400'}`}>
@@ -407,14 +531,16 @@ const DrawMap = () => {
               x={stagePos.x}
               y={stagePos.y}
               ref={stageRef}
-              draggable={interactionMode === 'grab' && !assetDragging}
+              draggable={toolMode === 'grab' && !assetDragging}
               onDragEnd={handleStageDragEnd}
               className="rounded-lg border shadow"
-              style={{ background: 'transparent', cursor: interactionMode === 'grab' ? 'grab' : 'default' }}
+              style={{ background: 'transparent', cursor: toolMode === 'grab' ? 'grab' : 'default' }}
               onContentDrop={handleAssetDragEnd}
               onContentMouseUp={handleAssetDragEnd}
-              onClick={interactionMode === 'pointer' ? handleCanvasClick : undefined}
-              onTap={interactionMode === 'pointer' ? handleCanvasClick : undefined}
+              onClick={toolMode === 'pointer' || toolMode === 'point' ? handleCanvasClick : undefined}
+              onTap={toolMode === 'pointer' || toolMode === 'point' ? handleCanvasClick : undefined}
+              onMouseMove={handleStageMouseMove}
+              onTouchMove={handleStageTouchMove}
             >
               <Layer>
                 {/* Background image */}
@@ -470,16 +596,24 @@ const DrawMap = () => {
                   <PlacedAsset
                     key={idx}
                     asset={lm}
-                    selected={interactionMode === 'pointer' && selectedAssetIdx === idx}
-                    onSelect={interactionMode === 'pointer' ? () => handleSelectAsset(idx) : undefined}
-                    onEdit={interactionMode === 'pointer' ? () => handleEditAsset(idx) : undefined}
-                    onDelete={interactionMode === 'pointer' ? () => handleDeleteAsset(idx) : undefined}
-                    onDrag={interactionMode === 'pointer' ? updated => handleDragAsset(idx, updated) : undefined}
-                    onResize={interactionMode === 'pointer' ? updated => handleResizeAsset(idx, updated) : undefined}
+                    selected={toolMode === 'pointer' && selectedAssetIdx === idx}
+                    onSelect={toolMode === 'pointer' ? () => handleSelectAsset(idx) : undefined}
+                    onEdit={toolMode === 'pointer' ? () => handleEditAsset(idx) : undefined}
+                    onDelete={toolMode === 'pointer' ? () => handleDeleteAsset(idx) : undefined}
+                    onDrag={toolMode === 'pointer' ? updated => handleDragAsset(idx, updated) : undefined}
+                    onResize={toolMode === 'pointer' ? updated => handleResizeAsset(idx, updated) : undefined}
                     onDragStart={() => setAssetDragging(true)}
                     onDragEnd={() => setAssetDragging(false)}
                   />
                 ))}
+                {/* Marker for asset placement anchor */}
+                {pendingAsset && pointerPos && (
+                  <Group x={pointerPos.x} y={pointerPos.y}>
+                    <Line points={[-10,0,10,0]} stroke="#e11d48" strokeWidth={2} />
+                    <Line points={[0,-10,0,10]} stroke="#e11d48" strokeWidth={2} />
+                    <Text text="Anchor" x={12} y={-8} fontSize={14} fill="#e11d48" />
+                  </Group>
+                )}
               </Layer>
             </Stage>
           </div>
@@ -543,6 +677,19 @@ const DrawMap = () => {
               <button className="btn" onClick={() => setShowLogin(false)}>Login</button>
               <button className="btn" onClick={() => setShowLogin(false)}>Cancel</button>
             </div>
+          </div>
+        </div>
+      )}
+      {/* QR Code Modal */}
+      {showQR && (
+        <div className="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-30">
+          <div className="bg-white dark:bg-gray-900 rounded-lg p-4 shadow-lg w-80 max-w-full flex flex-col items-center">
+            <div className="font-bold mb-2">Scan to View Map</div>
+            {qrLink && (
+              <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrLink)}`} alt="QR Code" />
+            )}
+            <div className="mt-2 break-all text-xs text-blue-600 dark:text-blue-300">{qrLink}</div>
+            <button className="btn mt-4" onClick={() => setShowQR(false)}>Close</button>
           </div>
         </div>
       )}
