@@ -15,9 +15,11 @@ import ProfileEdit from './pages/ProfileEdit';
 
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 
-function ProtectedRoute({ children }) {
+function ProtectedRoute({ children, allowStarterMap = false, allowPro = false }) {
   const token = sessionStorage.getItem('token');
-  return token ? children : <Navigate to="/signin" />;
+  if (!token) return <Navigate to="/signin" />;
+
+  return children;
 }
 
 function App() {
@@ -32,9 +34,9 @@ function App() {
           <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
           <Route path="/home" element={<Home2 />} />
           <Route path="/ProfileEdit" element={<ProfileEdit/>} />
-          <Route path="/map/:id" element={<MapViewer />} />
+          <Route path="/maps/:id" element={<MapViewer />} />
           
-            <Route path="/drawMap" element={<ProtectedRoute><DrawMap /></ProtectedRoute>} />
+          <Route path="/drawMap" element={<ProtectedRoute ><DrawMap /></ProtectedRoute>} />
         </Routes>
       </Router>
       </ThemeProvider>

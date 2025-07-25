@@ -7,7 +7,7 @@ import { FaQrcode, FaTrash, FaPlus, FaCheckCircle } from 'react-icons/fa';
 import logo from '../logo.svg';
 
 // --- Dashboard UI ---
-function DashboardHeader({ plan, scanCount, onAddMap }) {
+function DashboardHeader({ plan, scanCount, onAddMap, mapCount }) {
   // Tooltip state for scan limit
   const [showTooltip, setShowTooltip] = useState(false);
   // Set maxScanCount based on plan
@@ -15,28 +15,49 @@ function DashboardHeader({ plan, scanCount, onAddMap }) {
   if (plan && plan.toLowerCase().includes('starter')) maxScanCount = 50;
   if (plan && plan.toLowerCase().includes('pro')) maxScanCount = 1000;
   const percent = Math.max(0, Math.min(100, Math.round((scanCount / maxScanCount) * 100)));
+  // Determine if user can add a new map
+  const isStarter = plan && plan.toLowerCase().includes('starter');
+  const isPro = plan && plan.toLowerCase().includes('pro');
+  const canAddMap = isPro || (!isPro && !isStarter) || (isStarter && mapCount < 1);
+  const [showAddTooltip, setShowAddTooltip] = useState(false);
   return (
     <div className="flex flex-col items-center mb-6 w-full">
-      <div className="w-full flex flex-row items-center mb-4 gap-8 justify-between">
-        <div className="flex items-center">
-          <button onClick={onAddMap} className="px-6 py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-bold shadow-glow text-lg flex items-center gap-2 hover:scale-105 transition-all"> <FaPlus /> Add New Map</button>
-        </div>
-        <div className="flex-1 flex justify-center items-center">
-          {plan && (
-            <div className="bg-[#181c2a]/60 border border-accent-gold rounded-xl px-6 py-3 shadow-glow text-yellow-100 font-bold text-lg flex items-center gap-3 mx-auto">
-              <FaCheckCircle className="text-accent-gold" /> {plan} Plan
-              <a
-                href="https://forms.gle/XSKeisu5q5YWahgY8"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="ml-4 px-4 py-2 rounded-lg bg-gradient-to-r from-yellow-300 to-yellow-500 text-gray-900 font-bold shadow-glow text-sm hover:scale-105 transition-all"
-              >
-                Upgrade to Pro
-              </a>
+      <div className="w-full flex flex-col md:flex-row items-center justify-between gap-6 mb-4 flex-wrap md:flex-nowrap">
+        <div className="relative flex items-center mb-3 md:mb-0 w-full md:w-auto justify-center md:justify-start">
+          <button
+            onClick={canAddMap ? onAddMap : undefined}
+            className={`px-6 py-2 rounded-lg bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900 font-bold shadow-glow text-lg flex items-center gap-2 whitespace-nowrap transition-all ${canAddMap ? 'hover:scale-105' : 'opacity-60 cursor-not-allowed'}`}
+            disabled={!canAddMap}
+            onMouseEnter={() => !canAddMap && setShowAddTooltip(true)}
+            onMouseLeave={() => setShowAddTooltip(false)}
+            tabIndex={0}
+          >
+            <FaPlus /> Add New Map
+          </button>
+          {!canAddMap && showAddTooltip && (
+            <div className="absolute left-1/2 top-[-38px] -translate-x-1/2 bg-[#23243aee] text-yellow-100 text-xs font-semibold px-3 py-2 rounded-xl shadow-glow border border-accent-gold z-10 animate-fadeIn">
+              Starter plan allows only one map. Upgrade for unlimited maps.
             </div>
           )}
         </div>
-        <div className="flex items-center justify-end min-w-[110px]">
+        <div className="flex-1 flex justify-center mb-3 md:mb-0 w-full md:w-auto">
+          {plan && (
+            <div className="bg-[#181c2a]/60 border border-accent-gold rounded-xl px-6 py-3 shadow-glow text-yellow-100 font-bold text-lg flex items-center gap-3 mx-auto">
+              <FaCheckCircle className="text-accent-gold" /> {plan} Plan
+              {!(plan && plan.toLowerCase().includes('pro')) && (
+                <a
+                  href="https://forms.gle/XSKeisu5q5YWahgY8"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="ml-4 px-4 py-2 rounded-lg bg-gradient-to-r from-yellow-300 to-yellow-500 text-gray-900 font-bold shadow-glow text-sm hover:scale-105 transition-all"
+                >
+                  Upgrade to Pro
+                </a>
+              )}
+            </div>
+          )}
+        </div>
+        <div className="relative flex items-center justify-center w-full md:w-auto">
           <div
             className="w-20 h-20 flex flex-col items-center justify-center shadow-glow cursor-pointer bg-[#181c2aee] rounded-2xl border-2 border-accent-gold"
             onMouseEnter={() => setShowTooltip(true)}
@@ -77,6 +98,7 @@ function DashboardHeader({ plan, scanCount, onAddMap }) {
           </div>
         </div>
       </div>
+      {/* Removed duplicate plan display below header row */}
       <style>{`
         @keyframes spin-slow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .animate-spin-slow { animation: spin-slow 2.5s linear infinite; }
@@ -252,10 +274,11 @@ export default function Dashboard() {
     <div className="min-h-screen w-full bg-gradient-to-br from-[#15192b] via-[#101117] to-[#23243a] flex flex-col items-center font-sans">
       <Navbar />
       <div className="h-20" />
-      <section className="w-full max-w-5xl mx-auto py-16 px-6">
-        <h2 className="text-3xl font-bold text-accent-gold mb-8 ">Dashboard</h2>
-        <h4 className="text-3xl font-bold text-accent-gold mb-8 text-center">Your Maps</h4>
-        <DashboardHeader plan={plan} scanCount={scanCount} onAddMap={handleAddMap} />
+      <section className="w-full max-w-5xl mx-auto py-16 px-4">
+        <h2 className="text-3xl font-bold text-accent-gold mb-4 ">Dashboard</h2>
+       
+        <DashboardHeader plan={plan} scanCount={scanCount} onAddMap={handleAddMap} mapCount={maps.length} />
+         <h4 className="text-3xl font-bold text-accent-gold mb-8 ">Your Maps</h4>
         {loading ? (
           <div className="text-center text-yellow-300">Loading...</div>
         ) : (

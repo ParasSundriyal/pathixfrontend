@@ -3,9 +3,11 @@ import React, { useEffect, useRef, useState } from 'react';
 const BASE_CANVAS_WIDTH = 800;
 const BASE_CANVAS_HEIGHT = 500;
 
-function getMapUrl(search) {
-  const params = new URLSearchParams(search);
-  return params.get('map');
+
+// Extract map ID from URL path (e.g., /maps/:id)
+function getMapIdFromPath() {
+  const match = window.location.pathname.match(/\/maps\/(\w+)/);
+  return match ? match[1] : null;
 }
 
 
@@ -55,12 +57,19 @@ const MapViewer = () => {
     }
   }, [zoom]);
 
-  // Load map data from ?map= param
+  // Load map data from backend using map ID in URL path (decrement scan only on initial fetch)
+  // IMPORTANT: Only this fetch should use ?decrementScan=true. All other fetches (e.g., theme, assets) must NOT use this parameter.
+  const didFetchRef = useRef(false);
   useEffect(() => {
-    const mapUrl = getMapUrl(window.location.search);
-    if (mapUrl) {
-      fetch(mapUrl)
-        .then(res => res.json())
+  if (didFetchRef.current) return; // prevent second fetch
+    didFetchRef.current = true;
+    const mapId = getMapIdFromPath();
+    if (mapId) {
+      fetch(`${process.env.REACT_APP_API_URL}/api/maps/${mapId}?decrementScan=true`)
+        .then(res => {
+          if (!res.ok) throw new Error('Failed to fetch map');
+          return res.json();
+        })
         .then(data => setMapData(data))
         .catch(() => setError('Failed to load map data.'));
     }
@@ -97,6 +106,8 @@ const MapViewer = () => {
   // Draw the map on canvas (responsive)
   useEffect(() => {
     if (!mapData) return;
+    // Use mapData.data if present, else mapData
+    const map = mapData.data ? mapData.data : mapData;
     const canvas = stageRef.current;
     if (!canvas) return;
     const ctx = canvas.getContext('2d');
@@ -110,30 +121,30 @@ const MapViewer = () => {
     // Draw background
     if (bgImageObj) {
       ctx.drawImage(bgImageObj, 0, 0, BASE_CANVAS_WIDTH, BASE_CANVAS_HEIGHT);
-    } else if (mapData.theme?.backgroundColor) {
-      ctx.fillStyle = mapData.theme.backgroundColor;
+    } else if (map.theme?.backgroundColor) {
+      ctx.fillStyle = map.theme.backgroundColor;
       ctx.fillRect(0, 0, BASE_CANVAS_WIDTH, BASE_CANVAS_HEIGHT);
     } else {
       ctx.fillStyle = '#e0e7ff';
       ctx.fillRect(0, 0, BASE_CANVAS_WIDTH, BASE_CANVAS_HEIGHT);
     }
     // Draw GPS path
-    if (Array.isArray(mapData.gpsPath) && mapData.gpsPath.length > 1) {
+    if (Array.isArray(map.gpsPath) && map.gpsPath.length > 1) {
       ctx.save();
-      ctx.strokeStyle = mapData.theme?.roadStyle?.color || '#eebbc3';
-      ctx.lineWidth = mapData.theme?.roadStyle?.width || 8;
-      ctx.lineCap = mapData.theme?.roadStyle?.lineCap || 'round';
+      ctx.strokeStyle = map.theme?.roadStyle?.color || '#eebbc3';
+      ctx.lineWidth = map.theme?.roadStyle?.width || 8;
+      ctx.lineCap = map.theme?.roadStyle?.lineCap || 'round';
       ctx.beginPath();
-      ctx.moveTo(mapData.gpsPath[0].x, mapData.gpsPath[0].y);
-      for (let i = 1; i < mapData.gpsPath.length; i++) {
-        ctx.lineTo(mapData.gpsPath[i].x, mapData.gpsPath[i].y);
+      ctx.moveTo(map.gpsPath[0].x, map.gpsPath[0].y);
+      for (let i = 1; i < map.gpsPath.length; i++) {
+        ctx.lineTo(map.gpsPath[i].x, map.gpsPath[i].y);
       }
       ctx.stroke();
       ctx.restore();
     }
     // Draw landmarks
-    if (Array.isArray(mapData.landmarks)) {
-      for (const lm of mapData.landmarks) {
+    if (Array.isArray(map.landmarks)) {
+      for (const lm of map.landmarks) {
         // Draw icon (emoji or image)
         if (lm.icon && lm.icon.startsWith('http')) {
           const img = new window.Image();
@@ -142,14 +153,14 @@ const MapViewer = () => {
             ctx.drawImage(img, lm.x, lm.y, lm.width || 48, lm.height || 48);
           };
         } else {
-          ctx.font = `${lm.width || 32}px ${mapData.theme?.fonts?.[0] || 'Poppins, Arial, sans-serif'}`;
+          ctx.font = `${lm.width || 32}px ${map.theme?.fonts?.[0] || 'Poppins, Arial, sans-serif'}`;
           ctx.textAlign = 'center';
           ctx.textBaseline = 'middle';
           ctx.fillText(lm.icon || '•', lm.x + (lm.width || 24), lm.y + (lm.height || 24));
         }
         // Draw label
         if (lm.label) {
-          ctx.font = `16px ${mapData.theme?.fonts?.[0] || 'Poppins, Arial, sans-serif'}`;
+          ctx.font = `16px ${map.theme?.fonts?.[0] || 'Poppins, Arial, sans-serif'}`;
           ctx.fillStyle = '#555';
           ctx.textAlign = 'left';
           ctx.fillText(lm.label, lm.x, lm.y + (lm.height || 48) + 16);
@@ -157,11 +168,11 @@ const MapViewer = () => {
       }
     }
     // Draw user's current location (if available)
-    if (userLocation && mapData.gpsOrigin && mapData.gpsScale) {
+    if (userLocation && map.gpsOrigin && map.gpsScale) {
       // Convert user lat/lng to canvas coordinates using map's gpsOrigin and gpsScale
       const { lat, lng } = userLocation;
-      const { lat: originLat, lng: originLng } = mapData.gpsOrigin;
-      const gpsScale = mapData.gpsScale;
+      const { lat: originLat, lng: originLng } = map.gpsOrigin;
+      const gpsScale = map.gpsScale;
       const userX = BASE_CANVAS_WIDTH / 2 + (lng - originLng) * gpsScale;
       const userY = BASE_CANVAS_HEIGHT / 2 - (lat - originLat) * gpsScale;
       ctx.save();
@@ -193,7 +204,7 @@ const MapViewer = () => {
     }
     // Draw map name
     if (mapData.name) {
-      ctx.font = `30px ${mapData.theme?.fonts?.[0] || 'Poppins, Arial, sans-serif'}`;
+      ctx.font = `30px ${map.theme?.fonts?.[0] || 'Poppins, Arial, sans-serif'}`;
       ctx.fillStyle = '#888';
       ctx.textAlign = 'center';
       ctx.fillText(mapData.name, BASE_CANVAS_WIDTH / 2, 35);
