@@ -1,729 +1,374 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import Konva from 'konva';
 
-const themes = {
-  classic: {
-    background: '#e0e7ff',
-    roadColor: '#374151',
-  },
-  night: {
-    background: '#232946',
-    roadColor: '#eebbc3',
-  },
-};
+const BASE_CANVAS_WIDTH = 800;
+const BASE_CANVAS_HEIGHT = 500;
 
-function getDistance(lat1, lng1, lat2, lng2) {
-  // Haversine formula
-  const R = 6371e3; // metres
-  const φ1 = lat1 * Math.PI/180;
-  const φ2 = lat2 * Math.PI/180;
-  const Δφ = (lat2-lat1) * Math.PI/180;
-  const Δλ = (lng2-lng1) * Math.PI/180;
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c;
+function getMapUrl(search) {
+  const params = new URLSearchParams(search);
+  return params.get('map');
 }
 
-function getBearing(start, end) {
-  const toRad = deg => deg * Math.PI / 180;
-  const toDeg = rad => rad * 180 / Math.PI;
-  const startLat = toRad(start.lat);
-  const startLng = toRad(start.lng);
-  const endLat = toRad(end.lat);
-  const endLng = toRad(end.lng);
-  const y = Math.sin(endLng - startLng) * Math.cos(endLat);
-  const x = Math.cos(startLat) * Math.sin(endLat) -
-           Math.sin(startLat) * Math.cos(endLat) * Math.cos(endLng - startLng);
-  let bearing = toDeg(Math.atan2(y, x));
-  return (bearing + 360) % 360;
-}
 
-function getDirectionFromBearing(bearing) {
-  const directions = [
-    { name: 'north', min: 337.5, max: 22.5 },
-    { name: 'northeast', min: 22.5, max: 67.5 },
-    { name: 'east', min: 67.5, max: 112.5 },
-    { name: 'southeast', min: 112.5, max: 157.5 },
-    { name: 'south', min: 157.5, max: 202.5 },
-    { name: 'southwest', min: 202.5, max: 247.5 },
-    { name: 'west', min: 247.5, max: 292.5 },
-    { name: 'northwest', min: 292.5, max: 337.5 }
-  ];
-  return directions.find(dir => bearing >= dir.min && bearing < dir.max)?.name || 'north';
-}
 
-function getNavigationInstruction(userPos, destination, distance, heading) {
-  if (distance <= 30) {
-    return "You have arrived at your destination";
-  }
-  const bearing = getBearing(userPos, destination);
-  const direction = getDirectionFromBearing(bearing);
-  const relativeBearing = (bearing - heading + 360) % 360;
-  let turnInstruction = '';
-  if (relativeBearing > 337.5 || relativeBearing <= 22.5) {
-    turnInstruction = 'Continue straight ahead';
-  } else if (relativeBearing > 22.5 && relativeBearing <= 67.5) {
-    turnInstruction = 'Slight right';
-  } else if (relativeBearing > 67.5 && relativeBearing <= 112.5) {
-    turnInstruction = 'Turn right';
-  } else if (relativeBearing > 112.5 && relativeBearing <= 157.5) {
-    turnInstruction = 'Sharp right';
-  } else if (relativeBearing > 157.5 && relativeBearing <= 202.5) {
-    turnInstruction = 'Turn around';
-  } else if (relativeBearing > 202.5 && relativeBearing <= 247.5) {
-    turnInstruction = 'Sharp left';
-  } else if (relativeBearing > 247.5 && relativeBearing <= 292.5) {
-    turnInstruction = 'Turn left';
-  } else if (relativeBearing > 292.5 && relativeBearing <= 337.5) {
-    turnInstruction = 'Slight left';
-  }
-  return `${turnInstruction}. Head ${direction}.`;
-}
-
-const landmarkIcons = [
-  { type: 'house', icon: '🏠', label: 'Home' },
-  { type: 'tree', icon: '🌳', label: 'Landmark' },
-  { type: 'building', icon: '🏢', label: 'Building' },
-  { type: 'hospital', icon: '🏥', label: 'Hospital' },
-  { type: 'police', icon: '🚓', label: 'Police' },
-  { type: 'cafe', icon: '☕', label: 'Cafe' },
-  { type: 'pool', icon: '🏊', label: 'Pool' },
-  { type: 'school', icon: '🏫', label: 'School' },
-  { type: 'toilet', icon: '🚻', label: 'Toilet' },
-  { type: 'villa', icon: '🏡', label: 'Villa' },
-  { type: 'apartment', icon: '🏬', label: 'Apartment' },
-  { type: 'shop', icon: '🏪', label: 'Shop' },
-  { type: 'church', icon: '⛪', label: 'Church' },
-  { type: 'mosque', icon: '🕌', label: 'Mosque' },
-  { type: 'synagogue', icon: '🕍', label: 'Synagogue' },
-  { type: 'bank', icon: '🏦', label: 'Bank' },
-  { type: 'fire', icon: '🚒', label: 'Fire' },
-  { type: 'pharmacy', icon: '💊', label: 'Pharmacy' },
-  { type: 'restaurant', icon: '🍽️', label: 'Restaurant' },
-  { type: 'parking', icon: '🅿️', label: 'Parking' },
-];
-
-export default function MapViewer() {
-  const { id } = useParams();
-  const containerRef = useRef();
-  const [loading, setLoading] = useState(true);
+const MapViewer = () => {
+  // All hooks must be at the top level, before any logic or early returns
+  // Navigation modal state
+  const [showNavModal, setShowNavModal] = useState(false);
+  const [userLocation, setUserLocation] = useState(null);
+  const [locationError, setLocationError] = useState('');
+  const [assetsList, setAssetsList] = useState([]);
+  const [navTarget, setNavTarget] = useState(null); // selected asset for navigation
+  // Map/canvas state
+  const [mapData, setMapData] = useState(null);
   const [error, setError] = useState('');
-  const [map, setMap] = useState(null);
-  const [theme] = useState('night');
-  const [stageSize, setStageSize] = useState({ width: 800, height: 500 });
-  const [destination, setDestination] = useState(null);
-  const [userPos, setUserPos] = useState(null);
-  const [navInstruction, setNavInstruction] = useState('Waiting for destination...');
-  const [navDistance, setNavDistance] = useState(0);
-  const [showNav, setShowNav] = useState(false);
-  const [isSoundEnabled, setIsSoundEnabled] = useState(true);
-  const [currentScale, setCurrentScale] = useState(1);
-  const [loadingOverlay, setLoadingOverlay] = useState(false);
-  const [heading, setHeading] = useState(0);
-  const [searchName, setSearchName] = useState('');
-  const [searchError, setSearchError] = useState('');
+  const [bgImageObj, setBgImageObj] = useState(null);
+  const stageRef = useRef();
+  const [canvasSize, setCanvasSize] = useState({ width: BASE_CANVAS_WIDTH, height: BASE_CANVAS_HEIGHT, scale: 1 });
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const panStart = useRef({ x: 0, y: 0 });
+  const panOrigin = useRef({ x: 0, y: 0 });
 
-  // 1. Geolocation & Navigation improvements
+
+  // Responsive canvas size
   useEffect(() => {
+    function updateSize() {
+      const maxW = Math.min(window.innerWidth - 32, BASE_CANVAS_WIDTH);
+      const scale = maxW / BASE_CANVAS_WIDTH;
+      setCanvasSize({
+        width: Math.round(BASE_CANVAS_WIDTH * scale),
+        height: Math.round(BASE_CANVAS_HEIGHT * scale),
+        scale: scale * zoom,
+      });
+    }
+    updateSize();
+    window.addEventListener('resize', updateSize);
+    return () => window.removeEventListener('resize', updateSize);
+    // eslint-disable-next-line
+  }, [zoom]);
+
+  // Reset pan when zoom is reset to 1
+  useEffect(() => {
+    if (zoom === 1 && (pan.x !== 0 || pan.y !== 0)) {
+      setPan({ x: 0, y: 0 });
+    }
+  }, [zoom]);
+
+  // Load map data from ?map= param
+  useEffect(() => {
+    const mapUrl = getMapUrl(window.location.search);
+    if (mapUrl) {
+      fetch(mapUrl)
+        .then(res => res.json())
+        .then(data => setMapData(data))
+        .catch(() => setError('Failed to load map data.'));
+    }
+  }, []);
+
+  // Load background image if present
+  useEffect(() => {
+    if (mapData?.theme?.backgroundImage) {
+      const img = new window.Image();
+      img.src = mapData.theme.backgroundImage;
+      img.onload = () => setBgImageObj(img);
+    } else {
+      setBgImageObj(null);
+    }
+  }, [mapData]);
+
+  // Handle file upload
+  const handleFileUpload = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = evt => {
+      try {
+        const data = JSON.parse(evt.target.result);
+        setMapData(data);
+        setError('');
+      } catch {
+        setError('Invalid map file.');
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  // Draw the map on canvas (responsive)
+  useEffect(() => {
+    if (!mapData) return;
+    const canvas = stageRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvasSize.width, canvasSize.height);
+    ctx.save();
+    ctx.scale(canvasSize.scale, canvasSize.scale);
+    // Pan (translate) if zoomed in
+    if (zoom > 1) {
+      ctx.translate(pan.x, pan.y);
+    }
+    // Draw background
+    if (bgImageObj) {
+      ctx.drawImage(bgImageObj, 0, 0, BASE_CANVAS_WIDTH, BASE_CANVAS_HEIGHT);
+    } else if (mapData.theme?.backgroundColor) {
+      ctx.fillStyle = mapData.theme.backgroundColor;
+      ctx.fillRect(0, 0, BASE_CANVAS_WIDTH, BASE_CANVAS_HEIGHT);
+    } else {
+      ctx.fillStyle = '#e0e7ff';
+      ctx.fillRect(0, 0, BASE_CANVAS_WIDTH, BASE_CANVAS_HEIGHT);
+    }
+    // Draw GPS path
+    if (Array.isArray(mapData.gpsPath) && mapData.gpsPath.length > 1) {
+      ctx.save();
+      ctx.strokeStyle = mapData.theme?.roadStyle?.color || '#eebbc3';
+      ctx.lineWidth = mapData.theme?.roadStyle?.width || 8;
+      ctx.lineCap = mapData.theme?.roadStyle?.lineCap || 'round';
+      ctx.beginPath();
+      ctx.moveTo(mapData.gpsPath[0].x, mapData.gpsPath[0].y);
+      for (let i = 1; i < mapData.gpsPath.length; i++) {
+        ctx.lineTo(mapData.gpsPath[i].x, mapData.gpsPath[i].y);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+    // Draw landmarks
+    if (Array.isArray(mapData.landmarks)) {
+      for (const lm of mapData.landmarks) {
+        // Draw icon (emoji or image)
+        if (lm.icon && lm.icon.startsWith('http')) {
+          const img = new window.Image();
+          img.src = lm.icon;
+          img.onload = () => {
+            ctx.drawImage(img, lm.x, lm.y, lm.width || 48, lm.height || 48);
+          };
+        } else {
+          ctx.font = `${lm.width || 32}px ${mapData.theme?.fonts?.[0] || 'Poppins, Arial, sans-serif'}`;
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(lm.icon || '•', lm.x + (lm.width || 24), lm.y + (lm.height || 24));
+        }
+        // Draw label
+        if (lm.label) {
+          ctx.font = `16px ${mapData.theme?.fonts?.[0] || 'Poppins, Arial, sans-serif'}`;
+          ctx.fillStyle = '#555';
+          ctx.textAlign = 'left';
+          ctx.fillText(lm.label, lm.x, lm.y + (lm.height || 48) + 16);
+        }
+      }
+    }
+    // Draw user's current location (if available)
+    if (userLocation && mapData.gpsOrigin && mapData.gpsScale) {
+      // Convert user lat/lng to canvas coordinates using map's gpsOrigin and gpsScale
+      const { lat, lng } = userLocation;
+      const { lat: originLat, lng: originLng } = mapData.gpsOrigin;
+      const gpsScale = mapData.gpsScale;
+      const userX = BASE_CANVAS_WIDTH / 2 + (lng - originLng) * gpsScale;
+      const userY = BASE_CANVAS_HEIGHT / 2 - (lat - originLat) * gpsScale;
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(userX, userY, 12, 0, 2 * Math.PI);
+      ctx.fillStyle = '#e11d48';
+      ctx.strokeStyle = '#fff';
+      ctx.lineWidth = 3;
+      ctx.fill();
+      ctx.stroke();
+      ctx.font = 'bold 14px Arial';
+      ctx.fillStyle = '#e11d48';
+      ctx.textAlign = 'left';
+      ctx.fillText('You', userX + 16, userY - 8);
+      ctx.restore();
+      // Draw route to selected asset
+      if (navTarget) {
+        ctx.save();
+        ctx.beginPath();
+        ctx.moveTo(userX, userY);
+        ctx.lineTo(navTarget.x + (navTarget.width || 24), navTarget.y + (navTarget.height || 24));
+        ctx.strokeStyle = '#2563eb';
+        ctx.lineWidth = 5;
+        ctx.setLineDash([12, 10]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.restore();
+      }
+    }
+    // Draw map name
+    if (mapData.name) {
+      ctx.font = `30px ${mapData.theme?.fonts?.[0] || 'Poppins, Arial, sans-serif'}`;
+      ctx.fillStyle = '#888';
+      ctx.textAlign = 'center';
+      ctx.fillText(mapData.name, BASE_CANVAS_WIDTH / 2, 35);
+    }
+    // Draw scale bar
+    ctx.save();
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(30, BASE_CANVAS_HEIGHT - 40);
+    ctx.lineTo(130, BASE_CANVAS_HEIGHT - 40);
+    ctx.stroke();
+    ctx.font = '16px Arial';
+    ctx.fillStyle = '#fff';
+    ctx.fillText('100 m', 30, BASE_CANVAS_HEIGHT - 20);
+    ctx.restore();
+    ctx.restore();
+  }, [mapData, bgImageObj, canvasSize, userLocation, navTarget, pan.x, pan.y, zoom]);
+
+
+
+  if (error) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900">
+        <div className="bg-white dark:bg-gray-800 p-6 rounded shadow text-red-600">{error}</div>
+        <input type="file" accept=".json" onChange={handleFileUpload} className="mt-4" />
+      </div>
+    );
+  }
+
+  if (!mapData) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-screen bg-gray-100 dark:bg-gray-900">
+        <div className="bg-white dark:bg-gray-800 p-6 rounded shadow">Loading map...</div>
+        <input type="file" accept=".json" onChange={handleFileUpload} className="mt-4" />
+      </div>
+    );
+  }
+
+  // Open navigation modal: ask for location, then show assets
+  const handleOpenNavigation = () => {
+    setLocationError('');
     if (!navigator.geolocation) {
-      setError('Geolocation is not supported by your browser.');
+      setLocationError('Geolocation is not supported by your browser.');
+      setShowNavModal(true);
       return;
     }
-    let didCancel = false;
-    let timeoutId;
-    let watchId = navigator.geolocation.watchPosition(
-      pos => {
-        if (!didCancel) {
-          setUserPos({
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          });
-        }
-      },
-      err => {
-        if (!didCancel) {
-          if (err.code === 1) setError('Location permission denied.');
-          else if (err.code === 2) setError('Location unavailable.');
-          else if (err.code === 3) setError('Location request timed out.');
-          else setError('Location error.');
-        }
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
-    );
-    // Timeout for GPS signal loss
-    timeoutId = setTimeout(() => {
-      setError('GPS signal lost or too slow.');
-    }, 20000);
-    return () => {
-      didCancel = true;
-      navigator.geolocation.clearWatch(watchId);
-      clearTimeout(timeoutId);
-    };
-  }, []);
-
-  // 2. Map Data Loading improvements
-  useEffect(() => {
-    async function fetchMap() {
-      setLoading(true);
-      setError('');
-      try {
-        // Offline cache support
-        let data;
-        const cacheKey = `map_${id}`;
-        if (navigator.onLine) {
-          const res = await fetch(`${process.env.REACT_APP_API_URL}/api/maps/${id}`);
-          if (res.ok) {
-            data = await res.json();
-            localStorage.setItem(cacheKey, JSON.stringify(data));
-          } else if (res.status === 404) {
-            setError('Map not found.');
-            setLoading(false);
-            return;
-          } else {
-            setError('Network error.');
-            setLoading(false);
-            return;
-          }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        // Prepare asset list (landmarks)
+        if (Array.isArray(mapData?.landmarks)) {
+          setAssetsList(mapData.landmarks.map((lm, i) => ({
+            ...lm,
+            displayName: lm.label || lm.name || `Asset #${i + 1}`
+          })));
         } else {
-          const cached = localStorage.getItem(cacheKey);
-          if (cached) data = JSON.parse(cached);
-          else {
-            setError('Offline and no cached map available.');
-            setLoading(false);
-            return;
-          }
+          setAssetsList([]);
         }
-        if (!data || !data.data) {
-          setError('Map data is empty or corrupted.');
-          setLoading(false);
-          return;
-        }
-        setMap(data);
-      } catch {
-        setError('Network or parsing error.');
+        setShowNavModal(true);
+      },
+      (err) => {
+        setLocationError('Location access denied or unavailable.');
+        setShowNavModal(true);
       }
-      setLoading(false);
-    }
-    fetchMap();
-  }, [id]);
+    );
+  };
 
-  // 3. Navigation Calculations improvements
-  function safeGetDistance(lat1, lng1, lat2, lng2) {
-    if (
-      lat1 == null || lng1 == null || lat2 == null || lng2 == null ||
-      (lat1 === lat2 && lng1 === lng2)
-    ) return 0;
-    return getDistance(lat1, lng1, lat2, lng2);
-  }
-  function safeGetBearing(start, end) {
-    if (!start || !end || isNaN(start.lat) || isNaN(start.lng) || isNaN(end.lat) || isNaN(end.lng)) return 0;
-    const b = getBearing(start, end);
-    return isNaN(b) ? 0 : b;
-  }
-  function safeGetNavigationInstruction(userPos, destination, distance, heading) {
-    if (!userPos || !destination) return 'No navigation data.';
-    return getNavigationInstruction(userPos, destination, distance, heading);
-  }
+  // Select asset to navigate to (future: implement navigation logic)
+  const handleSelectAsset = (asset) => {
+    setNavTarget(asset);
+    setShowNavModal(false);
+  };
 
-  useEffect(() => {
-    function handleOrientation(e) {
-      if (e.absolute && e.alpha != null) {
-        setHeading(360 - e.alpha);
-      }
-    }
-    window.addEventListener('deviceorientationabsolute', handleOrientation);
-    window.addEventListener('deviceorientation', handleOrientation);
-    return () => {
-      window.removeEventListener('deviceorientationabsolute', handleOrientation);
-      window.removeEventListener('deviceorientation', handleOrientation);
-    };
-  }, []);
-
-  // 4. Speech Synthesis improvements
-  useEffect(() => {
-    if (!userPos || !destination) return;
-    const dist = safeGetDistance(userPos.lat, userPos.lng, destination.lat, destination.lng);
-    setNavDistance(Math.round(dist));
-    const instr = safeGetNavigationInstruction(userPos, destination, dist, heading);
-    setNavInstruction(instr);
-    setShowNav(true);
-    if (isSoundEnabled && 'speechSynthesis' in window && window.speechSynthesis) {
-      try {
-        window.speechSynthesis.cancel();
-        const utter = new window.SpeechSynthesisUtterance(instr);
-        window.speechSynthesis.speak(utter);
-      } catch {}
-    }
-  }, [userPos, destination, heading, isSoundEnabled]);
-
-  // 5. UI & Responsiveness improvements
-  // (in JSX: use width: '100%', maxWidth, etc. already present)
-  // Add touch event handling to prevent pinch-zoom conflicts
-  useEffect(() => {
-    function preventPinch(e) {
-      if (e.touches && e.touches.length > 1) e.preventDefault();
-    }
-    document.addEventListener('touchmove', preventPinch, { passive: false });
-    return () => document.removeEventListener('touchmove', preventPinch);
-  }, []);
-
-  // 6. Destination Search improvements
-  // (in JSX: already case-insensitive, add null label check and empty results message)
-  useEffect(() => {
-    if (!containerRef.current || !map || !map.data) return;
-    const { width, height } = stageSize;
-    containerRef.current.innerHTML = '';
-    const stage = new Konva.Stage({
-      container: containerRef.current,
-      width,
-      height,
-      scaleX: currentScale,
-      scaleY: currentScale,
-    });
-    const backgroundLayer = new Konva.Layer();
-    const roadLayer = new Konva.Layer();
-    const landmarkLayer = new Konva.Layer();
-    const userLayer = new Konva.Layer();
-    const routeLayer = new Konva.Layer();
-    stage.add(backgroundLayer);
-    stage.add(roadLayer);
-    stage.add(landmarkLayer);
-    stage.add(routeLayer);
-    stage.add(userLayer);
-    const bgRect = new Konva.Rect({ x: 0, y: 0, width, height, fill: themes[theme].background });
-    backgroundLayer.add(bgRect);
-    backgroundLayer.draw();
-    (Array.isArray(map.data.roads) ? map.data.roads : []).forEach(points => {
-      const line = new Konva.Line({
-        points,
-        stroke: themes[theme].roadColor,
-        strokeWidth: 8,
-        lineCap: 'round',
-        lineJoin: 'round',
-      });
-      roadLayer.add(line);
-    });
-    if (Array.isArray(map.data.simRoute)) {
-      const simLine = new Konva.Line({
-        points: map.data.simRoute,
-        stroke: '#43a047',
-        strokeWidth: 8,
-        lineCap: 'round',
-        lineJoin: 'round',
-        dash: [18, 12],
-        shadowBlur: 8,
-        shadowColor: '#43a047',
-      });
-      roadLayer.add(simLine);
-    }
-    roadLayer.draw();
-    (Array.isArray(map.data.landmarks) ? map.data.landmarks : []).forEach(lm => {
-      const iconText = landmarkIcons.find(i => i.type === lm.type)?.icon || '❓';
-      const icon = new Konva.Text({
-        x: lm.x - 16,
-        y: lm.y - 16,
-        text: iconText,
-        fontSize: 32,
-        shadowColor: '#000',
-        shadowBlur: 4,
-        shadowOffset: { x: 2, y: 2 },
-        shadowOpacity: 0.3,
-      });
-      landmarkLayer.add(icon);
-      if (lm.label) {
-        const labelText = new Konva.Text({
-          x: lm.x - 32,
-          y: lm.y + 20,
-          text: lm.label,
-          fontSize: 16,
-          fill: '#fff',
-          fontStyle: 'bold',
-          shadowColor: '#000',
-          shadowBlur: 2,
-          shadowOffset: { x: 1, y: 1 },
-          shadowOpacity: 0.2,
-          align: 'center',
-          width: 64,
-        });
-        landmarkLayer.add(labelText);
-      }
-    });
-    landmarkLayer.draw();
-    const autoMarkerSize = Math.max(10, Math.min(32, 18 / currentScale));
-    if (userPos) {
-      const marker = new Konva.Circle({
-        x: width/2,
-        y: height/2,
-        radius: autoMarkerSize,
-        fill: '#2196f3',
-        stroke: '#fff',
-        strokeWidth: 3,
-        shadowBlur: 8,
-        shadowColor: '#2196f3',
-      });
-      userLayer.add(marker);
-      userLayer.draw();
-    }
-    return () => stage.destroy();
-  }, [map, theme, stageSize, userPos, currentScale]);
-
-  // 7. General Edge Cases: browser compatibility
-  useEffect(() => {
-    if (!('geolocation' in navigator)) setError('Geolocation API not supported.');
-    if (!('speechSynthesis' in window)) setIsSoundEnabled(false);
-  }, []);
-
-  // 8. Konva Rendering improvements
-  useEffect(() => {
-    if (!containerRef.current || !map || !map.data) return;
-    // Destroy previous stage if any
-    if (containerRef.current._konvaStage) {
-      containerRef.current._konvaStage.destroy();
-      containerRef.current._konvaStage = null;
-    }
-    const { width, height } = stageSize;
-    containerRef.current.innerHTML = '';
-    const stage = new Konva.Stage({
-      container: containerRef.current,
-      width,
-      height,
-      scaleX: currentScale,
-      scaleY: currentScale,
-    });
-    containerRef.current._konvaStage = stage;
-    const backgroundLayer = new Konva.Layer();
-    const roadLayer = new Konva.Layer();
-    const landmarkLayer = new Konva.Layer();
-    const userLayer = new Konva.Layer();
-    const routeLayer = new Konva.Layer();
-    stage.add(backgroundLayer);
-    stage.add(roadLayer);
-    stage.add(landmarkLayer);
-    stage.add(routeLayer);
-    stage.add(userLayer);
-    const bgRect = new Konva.Rect({ x: 0, y: 0, width, height, fill: themes[theme].background });
-    backgroundLayer.add(bgRect);
-    backgroundLayer.draw();
-    (Array.isArray(map.data.roads) ? map.data.roads : []).forEach(points => {
-      const line = new Konva.Line({
-        points,
-        stroke: themes[theme].roadColor,
-        strokeWidth: 8,
-        lineCap: 'round',
-        lineJoin: 'round',
-      });
-      roadLayer.add(line);
-    });
-    if (Array.isArray(map.data.simRoute)) {
-      const simLine = new Konva.Line({
-        points: map.data.simRoute,
-        stroke: '#43a047',
-        strokeWidth: 8,
-        lineCap: 'round',
-        lineJoin: 'round',
-        dash: [18, 12],
-        shadowBlur: 8,
-        shadowColor: '#43a047',
-      });
-      roadLayer.add(simLine);
-    }
-    roadLayer.draw();
-    (Array.isArray(map.data.landmarks) ? map.data.landmarks : []).forEach(lm => {
-      const iconText = landmarkIcons.find(i => i.type === lm.type)?.icon || '❓';
-      const icon = new Konva.Text({
-        x: lm.x - 16,
-        y: lm.y - 16,
-        text: iconText,
-        fontSize: 32,
-        shadowColor: '#000',
-        shadowBlur: 4,
-        shadowOffset: { x: 2, y: 2 },
-        shadowOpacity: 0.3,
-      });
-      landmarkLayer.add(icon);
-      if (lm.label) {
-        const labelText = new Konva.Text({
-          x: lm.x - 32,
-          y: lm.y + 20,
-          text: lm.label,
-          fontSize: 16,
-          fill: '#fff',
-          fontStyle: 'bold',
-          shadowColor: '#000',
-          shadowBlur: 2,
-          shadowOffset: { x: 1, y: 1 },
-          shadowOpacity: 0.2,
-          align: 'center',
-          width: 64,
-        });
-        landmarkLayer.add(labelText);
-      }
-    });
-    landmarkLayer.draw();
-    const autoMarkerSize = Math.max(10, Math.min(32, 18 / currentScale));
-    if (userPos) {
-      const marker = new Konva.Circle({
-        x: width/2,
-        y: height/2,
-        radius: autoMarkerSize,
-        fill: '#2196f3',
-        stroke: '#fff',
-        strokeWidth: 3,
-        shadowBlur: 8,
-        shadowColor: '#2196f3',
-      });
-      userLayer.add(marker);
-      userLayer.draw();
-    }
-    return () => stage.destroy();
-  }, [map, theme, stageSize, userPos, currentScale]);
-
-  if (loading) return <div style={{textAlign:'center',marginTop:40}}>Loading map...</div>;
-  if (error) return <div style={{color:'#e53935',textAlign:'center',marginTop:40}}>{error}</div>;
   return (
-    <div style={{
-      minHeight: '100vh',
-      background: 'linear-gradient(135deg, #1a1f3c 0%, #0f1220 100%)',
-      fontFamily: 'Poppins, sans-serif',
-      color: '#e2e8f0',
-      padding: 0,
-      margin: 0,
-      boxSizing: 'border-box',
-      width: '100vw',
-      overflowX: 'hidden',
-    }}>
-      <div className="header-section" style={{
-        width: '100%',
-        maxWidth: 900,
-        margin: '0 auto',
-        padding: '40px 0 24px 0',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        gap: 12,
-      }}>
-        <span style={{ fontSize: 48, filter: 'drop-shadow(0 4px 8px rgba(0,0,0,0.2))' }}>📍</span>
-        <div className="main-title" style={{
-          fontSize: '1.8rem',
-          fontWeight: 700,
-          letterSpacing: 1,
-          color: '#818cf8',
-          textShadow: '0 2px 4px rgba(0,0,0,0.2)',
-          margin: '8px 0',
-        }}>Live Property Map</div>
-        <div className="subtitle" style={{
-          fontSize: '1.1rem',
-          color: '#94a3b8',
-          fontWeight: 400,
-          textAlign: 'center',
-          marginBottom: 4,
-        }}>See your location and nearby assets in real time</div>
-      </div>
-      <div className="map-card" style={{
-        padding: '24px 16px 16px 16px',
-        borderRadius: 24,
-        background: 'rgba(255,255,255,0.08)',
-        backdropFilter: 'blur(10px)',
-        boxShadow: '0 8px 32px rgba(0,0,0,0.2)',
-        maxWidth: 900,
-        width: '98vw',
-        margin: '0 auto 24px auto',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        border: '1px solid rgba(255,255,255,0.1)',
-      }}>
-        <div className="destination-input" style={{
-          width: '98vw',
-          maxWidth: 320,
-          marginBottom: 16,
-          display: 'flex',
-          gap: 8,
-        }}>
-          <input
-            type="text"
-            placeholder="Enter landmark name..."
-            value={searchName}
-            onChange={e => { setSearchName(e.target.value); setSearchError(''); }}
-            style={{
-              flex: 1,
-              padding: '12px 16px',
-              borderRadius: 8,
-              border: '1px solid rgba(255,255,255,0.2)',
-              background: 'rgba(255,255,255,0.1)',
-              color: '#fff',
-              fontSize: '1em',
-              backdropFilter: 'blur(4px)',
-            }}
-          />
-          <button
-            onClick={() => {
-              const lm = (map?.data?.landmarks || []).find(l => l.label && l.label.toLowerCase() === searchName.trim().toLowerCase());
-              if (lm) {
-                setDestination({ lat: lm.x, lng: lm.y, name: lm.label });
-                setShowNav(true);
-                setSearchError('');
-              } else {
-                setSearchError('No landmark found with that name.');
-              }
-            }}
-            style={{
-              padding: '12px 20px',
-              borderRadius: 8,
-              border: 'none',
-              background: '#818cf8',
-              color: '#fff',
-              fontWeight: 500,
-              cursor: 'pointer',
-              transition: 'all 0.2s ease',
-            }}
-            disabled={!searchName.trim()}
-          >Navigate</button>
+    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800">
+      <header className="flex flex-col items-center py-4 font-sans">
+        <div className="flex items-center gap-2 text-3xl font-bold font-serif ">
+          <span role="img" aria-label="map">🗺️</span>
+          <span className=" text-[oklch(78.9%_0.154_211.53)]">Pathix Map Viewer</span>
         </div>
-        {searchError && <div style={{ color: '#e53935', marginTop: 4, fontWeight: 500 }}>{searchError}</div>}
-        <div className="map-container" style={{
-          width: '98vw',
-          maxWidth: 800,
-          borderRadius: 20,
-          overflow: 'hidden',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
-          border: '1px solid rgba(255,255,255,0.15)',
-          background: 'rgba(255,255,255,0.08)',
-          margin: '0 auto',
-          minHeight: 220,
-          minWidth: 220,
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          position: 'relative',
-        }}>
-          <div style={{
-            position: 'absolute',
-            top: 16,
-            left: 16,
-            zIndex: 20,
-            background: 'rgba(0,0,0,0.18)',
-            borderRadius: '50%',
-            width: 38,
-            height: 38,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            boxShadow: '0 2px 8px #23294633',
-            border: '2px solid #fff',
-            fontWeight: 700,
-            fontSize: 18,
-            color: '#e53935',
-            letterSpacing: 1,
-            userSelect: 'none',
-          }}>N</div>
-          <div ref={containerRef}></div>
-          <div className="zoom-controls" style={{
-            position: 'absolute',
-            right: 20,
-            top: 20,
-            display: 'flex',
-            flexDirection: 'column',
-            gap: 8,
-            zIndex: 10,
-          }}>
-            <button className="zoom-btn" onClick={()=>setCurrentScale(s=>Math.min(4,s*1.1))} style={{
-              width: 40,
-              height: 40,
-              background: 'rgba(255,255,255,0.1)',
-              border: '1px solid rgba(255,255,255,0.2)',
-              borderRadius: 8,
-              color: '#fff',
-              fontSize: 20,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              backdropFilter: 'blur(4px)',
-              transition: 'all 0.2s ease',
-            }}>+</button>
-            <button className="zoom-btn" onClick={()=>setCurrentScale(s=>Math.max(0.5,s/1.1))} style={{
-              width: 40,
-              height: 40,
-              background: 'rgba(255,255,255,0.1)',
-              border: '1px solid rgba(255,255,255,0.2)',
-              borderRadius: 8,
-              color: '#fff',
-              fontSize: 20,
-              cursor: 'pointer',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              backdropFilter: 'blur(4px)',
-              transition: 'all 0.2s ease',
-            }}>-</button>
+        <div className="subtitle text-gray-400 dark:text-blue-100 text-m mt-1 ml-2 font-sans">View property maps shared via QR or file</div>
+      </header>
+      <div className="flex flex-col items-center max-w-4xl mx-auto w-full gap-4 px-2 font-sans">
+        <div className="map-area flex flex-col items-center bg-white/10 dark:bg-gray-900/80 rounded-2xl shadow-lg m-2 p-2 border border-white/10 dark:border-gray-700 w-full" style={{maxWidth: 900}}>
+          <div className="map-canvas-card relative w-full flex justify-center items-center rounded-2xl shadow-lg border border-white/10 dark:border-gray-700 bg-white/10 dark:bg-gray-900/80 overflow-x-auto" style={{ minHeight: canvasSize.height + 40 }}>
+            <canvas
+              ref={stageRef}
+              width={canvasSize.width}
+              height={canvasSize.height}
+              style={{ background: 'transparent', borderRadius: 12, width: canvasSize.width, height: canvasSize.height, maxWidth: '100%', touchAction: 'manipulation', cursor: zoom > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default' }}
+              onPointerDown={e => {
+                if (zoom <= 1) return;
+                setIsPanning(true);
+                panStart.current = { x: e.clientX, y: e.clientY };
+                panOrigin.current = { ...pan };
+              }}
+              onPointerMove={e => {
+                if (!isPanning) return;
+                const dx = (e.clientX - panStart.current.x) / canvasSize.scale;
+                const dy = (e.clientY - panStart.current.y) / canvasSize.scale;
+                // Clamp pan so you can't pan out of bounds
+                let newX = panOrigin.current.x + dx;
+                let newY = panOrigin.current.y + dy;
+                const maxPanX = (BASE_CANVAS_WIDTH * (zoom - 1)) / zoom;
+                const maxPanY = (BASE_CANVAS_HEIGHT * (zoom - 1)) / zoom;
+                newX = Math.max(-maxPanX, Math.min(0, newX));
+                newY = Math.max(-maxPanY, Math.min(0, newY));
+                setPan({ x: newX, y: newY });
+              }}
+              onPointerUp={() => setIsPanning(false)}
+              onPointerLeave={() => setIsPanning(false)}
+            />
+            {/* Zoom controls (mobile) */}
+            <div className="absolute bottom-4 right-4 flex flex-col gap-2 z-10 md:hidden">
+              <button
+                className="rounded-full bg-blue-600 text-white w-9 h-9 text-lg shadow hover:bg-blue-700 flex items-center justify-center border border-white/30"
+                style={{ boxShadow: '0 2px 8px #0002' }}
+                aria-label="Zoom in"
+                onClick={() => setZoom(z => Math.min(4, z * 1.1))}
+              >
+                <span style={{fontWeight: 'bold', fontSize: 22, lineHeight: 1}}>+</span>
+              </button>
+              <button
+                className="rounded-full bg-blue-600 text-white w-9 h-9 text-lg shadow hover:bg-blue-700 flex items-center justify-center border border-white/30"
+                style={{ boxShadow: '0 2px 8px #0002' }}
+                aria-label="Zoom out"
+                onClick={() => setZoom(z => Math.max(0.5, z / 1.1))}
+              >
+                <span style={{fontWeight: 'bold', fontSize: 22, lineHeight: 1}}>-</span>
+              </button>
+            </div>
+            {/* Navigation button (top right) */}
+            <button
+              className="absolute top-4 right-4 z-20 bg-green-600 hover:bg-green-700 text-white rounded-full shadow px-4 py-2 text-sm font-semibold flex items-center gap-2 border border-white/30"
+              style={{ boxShadow: '0 2px 8px #0002' }}
+              onClick={handleOpenNavigation}
+            >
+              <span role="img" aria-label="navigate">🧭</span> Navigate
+            </button>
+            {/* Navigation Modal */}
+            {showNavModal && (
+              <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50">
+                <div className="bg-white dark:bg-gray-900 rounded-xl shadow-lg p-6 max-w-xs w-full relative">
+                  <button className="absolute top-2 right-2 text-gray-400 hover:text-gray-700 dark:hover:text-white" onClick={() => setShowNavModal(false)}>&times;</button>
+                  <div className="font-bold text-lg mb-2 flex items-center gap-2"><span role="img" aria-label="navigate">🧭</span>Navigate to Asset</div>
+                  {locationError && <div className="text-red-600 text-sm mb-2">{locationError}</div>}
+                  {!locationError && !userLocation && <div className="text-gray-500 text-sm mb-2">Requesting location...</div>}
+                  {userLocation && (
+                    <>
+                      {assetsList.length === 0 ? (
+                        <div className="text-gray-500 text-sm">No assets found on this map.</div>
+                      ) : (
+                        <ul className="divide-y divide-gray-200 dark:divide-gray-700 max-h-48 overflow-y-auto my-2">
+                          {assetsList.map((asset, i) => (
+                            <li key={i} className="py-2 flex items-center gap-2 cursor-pointer hover:bg-blue-50 dark:hover:bg-gray-800 rounded px-2" onClick={() => handleSelectAsset(asset)}>
+                              <span className="text-xl">{asset.icon || '📍'}</span>
+                              <span className="font-medium">{asset.displayName}</span>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
           </div>
         </div>
+        <div className="mt-4 text-gray-500 text-xs text-center">Upload a map JSON file or scan a QR code to view a map.</div>
+        <input type="file" accept=".json" onChange={handleFileUpload} className="mt-2" style={{maxWidth: 300}} />
       </div>
-      {showNav && (
-        <div className="nav-notification navigation active" style={{
-          position: 'fixed',
-          right: 20,
-          top: '50%',
-          transform: 'translateY(-50%)',
-          background: 'linear-gradient(135deg, rgba(26,31,60,0.95) 0%, rgba(52,211,153,0.1) 100%)',
-          backdropFilter: 'blur(10px)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          borderRadius: 16,
-          padding: 20,
-          color: '#e2e8f0',
-          fontSize: '1em',
-          boxShadow: '0 4px 24px rgba(0,0,0,0.2)',
-          zIndex: 100,
-          minWidth: 280,
-          maxWidth: 320,
-          transition: 'all 0.3s ease',
-          opacity: 1,
-          pointerEvents: 'all',
-        }}>
-          <button className="sound-toggle" onClick={()=>setIsSoundEnabled(s=>!s)} style={{
-            position: 'absolute',
-            top: 12,
-            right: 40,
-            background: 'none',
-            border: 'none',
-            color: '#94a3b8',
-            cursor: 'pointer',
-            padding: 4,
-            fontSize: '1.2em',
-            transition: 'color 0.2s ease',
-            opacity: isSoundEnabled ? 1 : 0.5,
-          }}>{isSoundEnabled ? '🔊' : '🔇'}</button>
-          <button className="close-btn" onClick={()=>setShowNav(false)} style={{
-            position: 'absolute',
-            top: 12,
-            right: 12,
-            background: 'none',
-            border: 'none',
-            color: '#94a3b8',
-            cursor: 'pointer',
-            padding: 4,
-            fontSize: '1.2em',
-            transition: 'color 0.2s ease',
-          }}>×</button>
-          <div className="header" style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            marginBottom: 12,
-            paddingBottom: 12,
-            borderBottom: '1px solid rgba(255,255,255,0.1)',
-          }}>
-            <span style={{ color: '#34d399', fontWeight: 600, fontSize: '1.1em' }}>📍</span>
-            <span style={{ color: '#34d399', fontWeight: 600, fontSize: '1.1em' }}>Navigation</span>
-          </div>
-          <div className="distance" style={{ fontSize: '1.8em', fontWeight: 700, color: '#fff', margin: '8px 0' }}>{navDistance} m</div>
-          <div className="instruction" style={{ color: '#94a3b8', fontSize: '0.95em', lineHeight: 1.4 }}>{navInstruction}</div>
-        </div>
-      )}
+      <footer className="text-center text-gray-400 text-xs my-4">&copy; 2024 Pathix &mdash; Map Viewer</footer>
     </div>
   );
-} 
+};
+
+export default MapViewer;

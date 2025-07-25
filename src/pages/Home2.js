@@ -8,6 +8,7 @@
 // .bg-accent-gold { background-color: #f6d365; }
 // .font-serif { font-family: 'Playfair Display', serif; }
 import React from 'react';
+import Navbar from '../components/Navbar';
 import { FaMapMarkedAlt, FaQrcode, FaRobot, FaChartBar, FaMobileAlt, FaCheckCircle } from 'react-icons/fa';
 import { MdOutlineDashboard } from 'react-icons/md';
 import logo from '../logo.svg';
@@ -17,13 +18,7 @@ import { Link } from 'react-router-dom';
 export default function Home2() {
   return (
     <div className="min-h-screen w-full bg-gradient-to-br from-[#15192b] via-[#101117] to-[#23243a] flex flex-col items-center font-sans">
-      {/* Top Navbar with Logo */}
-      <nav className="w-full flex items-center px-48 py-6 fixed top-0 left-0 z-30 bg-gradient-to-b from-[#181c2aee] to-transparent backdrop-blur-xl">
-        <div className="flex items-center gap-3">
-          <img src={logo} alt="Pathix Logo" className="h-12 w-12 drop-shadow-[0_0_16px_#f6d365]" />
-          <span className="text-3xl font-extrabold font-sans bg-gradient-to-r from-yellow-300 via-yellow-100 to-yellow-400 bg-clip-text text-transparent drop-shadow-[0_0_16px_#f6d365] tracking-wide">Pathix</span>
-        </div>
-      </nav>
+      <Navbar />
       <div className="h-20" />
       {/* Hero Section */}
       <section className="w-full max-w-7xl mx-auto flex flex-col md:flex-row items-stretch justify-between pt-36 pb-24 px-4 md:px-12">
@@ -32,7 +27,7 @@ export default function Home2() {
           <h2 className="text-base md:text-2xl text-yellow-100 font-medium max-w-2xl font-serif">Register, design, and share interactive maps of your property instantly.</h2>
           <div className="flex gap-6 mt-6 mb-10">
             <Link to="/signup" className="px-8 py-3 rounded-2xl bg-gradient-to-r from-yellow-300 to-yellow-500 text-gray-900 font-bold text-lg shadow-[0_0_16px_#f6d36588] hover:scale-105 transition-all">Register Now</Link>
-            <Link to="/signin" className="px-8 py-3 rounded-2xl border-2 border-yellow-300 text-yellow-200 font-bold text-lg shadow-[0_0_8px_#f6d36544] hover:bg-yellow-300 hover:text-gray-900 transition-all">Login to Dashboard</Link>
+            <Link to="/dashboard" className="px-8 py-3 rounded-2xl border-2 border-yellow-300 text-yellow-200 font-bold text-lg shadow-[0_0_8px_#f6d36544] hover:bg-yellow-300 hover:text-gray-900 transition-all">Open Dashboard</Link>
           </div>
         </div>
         <div className="flex-1 flex justify-center items-center">
@@ -77,8 +72,8 @@ export default function Home2() {
         <h3 className="text-2xl md:text-3xl font-bold text-accent-gold mb-8 text-center tracking-wide">Pricing</h3>
         <div className="flex flex-col md:flex-row gap-8 justify-center items-stretch">
           <PricingCard plan="Starter" price="₹0" features={["50 free scans/month", "1 map", "Basic support"]} cta="Get Started" highlight={false} />
-          <PricingCard plan="Pro" price="₹499" features={["1000 scans/month", "Unlimited maps", "Analytics dashboard", "Priority support"]} cta="Go Pro" highlight={true} />
-          <PricingCard plan="Enterprise" price="Custom" features={["API access", "AR & white-labeling", "Dedicated manager"]} cta="Contact Sales" highlight={false} />
+          <PricingCard plan="Pro" price="₹499" features={["1000 scans/month", "Unlimited maps", "Analytics dashboard", "Priority support"]} cta="Go Pro" highlight={true}  link={"https://forms.gle/XSKeisu5q5YWahgY8"}/>
+          <PricingCard plan="Enterprise" price="Custom" features={["API access", "AR & white-labeling", "Dedicated manager"]} cta="Contact Sales" highlight={false} link="mailto:suppot.pathix@gmail.com" />
         </div>
       </section>
 
@@ -89,10 +84,10 @@ export default function Home2() {
           <FaqItem q="Who can use Pathix?" a="Any organization—colleges, resorts, campuses, and more—can create interactive maps." />
           <FaqItem q="Is coding required?" a="No, Pathix is fully no-code and intuitive for all users." />
           <FaqItem q="Can I try before buying?" a="Yes, the Starter plan is free with no credit card required." />
-          <FaqItem q="How do I get support?" a="Contact us at support@pathix.in or use the Help Center in your dashboard." />
+        <FaqItem q="How do I get support?" a={<span>Contact us at <a href="mailto:suppot.pathix@gmail.com" className="text-accent-gold underline hover:text-yellow-400 transition-all">suppot.pathix@gmail.com</a> or use the Help Center in your dashboard.</span>} />
         </div>
         <div className="text-center">
-          <a href="mailto:support@pathix.in" className="text-accent-gold underline hover:text-yellow-400 transition-all">Contact Support</a>
+          <a href="mailto:suppot.pathix@gmail.com" className="text-accent-gold underline hover:text-yellow-400 transition-all">Contact Support</a>
         </div>
       </section>
 
@@ -129,7 +124,7 @@ function StepCard({ step, title, desc }) {
 }
 
 // --- Pricing Card ---
-function PricingCard({ plan, price, features, cta, highlight }) {
+function PricingCard({ plan, price, features, cta, highlight, link }) {
   return (
     <div className={`relative flex flex-col items-center rounded-2xl shadow-glass border border-accent-gold px-8 py-10 min-w-[260px] max-w-xs backdrop-blur-md bg-gradient-to-br from-[#23243aee] to-[#181c2aee] transition-transform duration-500 ease-[cubic-bezier(0.22,1,0.36,1)] hover:-translate-y-4 hover:scale-110 hover:rotate-x-8 hover:rotate-y-[-4deg] hover:shadow-glow-animate group cursor-pointer ${highlight ? 'scale-105 border-2 border-accent-gold shadow-glow' : ''}`} style={{perspective: '1600px', transformStyle: 'preserve-3d'}}>
       {highlight && (
@@ -144,7 +139,13 @@ function PricingCard({ plan, price, features, cta, highlight }) {
           <li key={i} className="flex items-center text-gray-200 text-sm"><FaCheckCircle className="text-accent-gold mr-2 group-hover:animate-pulse-slow" />{f}</li>
         ))}
       </ul>
-      <Link to="/signup" className={`px-6 py-2 rounded-lg font-bold text-lg shadow-glow transition-all ${highlight ? 'bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900' : 'border border-accent-gold text-accent-gold hover:bg-accent-gold hover:text-gray-900'}`}>{cta}</Link>
+      {link && link.startsWith('http') ? (
+        <a href={link} target="_blank" rel="noopener noreferrer" className={`px-6 py-2 rounded-lg font-bold text-lg shadow-glow transition-all ${highlight ? 'bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900' : 'border border-accent-gold text-accent-gold hover:bg-accent-gold hover:text-gray-900'}`}>{cta}</a>
+      ) : link && link.startsWith('mailto:') ? (
+        <a href={link} className={`px-6 py-2 rounded-lg font-bold text-lg shadow-glow transition-all ${highlight ? 'bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900' : 'border border-accent-gold text-accent-gold hover:bg-accent-gold hover:text-gray-900'}`}>{cta}</a>
+      ) : (
+        <Link to={link || '/signup'} className={`px-6 py-2 rounded-lg font-bold text-lg shadow-glow transition-all ${highlight ? 'bg-gradient-to-r from-accent-gold to-yellow-400 text-gray-900' : 'border border-accent-gold text-accent-gold hover:bg-accent-gold hover:text-gray-900'}`}>{cta}</Link>
+      )}
     </div>
   );
 }

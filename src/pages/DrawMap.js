@@ -391,6 +391,8 @@ const DrawMap = () => {
       gpsPath,
       landmarks,
       theme: currentTheme,
+      gpsOrigin: gpsOriginRef.current,
+      gpsScale: gpsScale,
     };
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -425,20 +427,29 @@ const DrawMap = () => {
       gpsPath,
       landmarks,
       theme: currentTheme?._id,
+      gpsOrigin: gpsOriginRef.current,
+      gpsScale: gpsScale,
     };
+    const token = sessionStorage.getItem('token');
     try {
-      const response = await fetch(`${process.env.REACT_APP_API_URL}/api/maps/export`, {
+      const response = await fetch(`${process.env.REACT_APP_API_URL}/api/maps`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {})
+        },
         body: JSON.stringify(data),
       });
       const result = await response.json();
-      if (result.link) {
+      if (response.ok && result.link) {
         setQrLink(result.link);
         setShowQR(true);
+        if (result.message) alert(result.message);
+      } else {
+        alert(result.message || 'Failed to export map as QR.');
       }
     } catch (err) {
-      alert('Failed to export map as QR.');
+      alert('Failed to export map as QR. ' + (err?.message || ''));
     }
     setShowExportMenu(false);
   };

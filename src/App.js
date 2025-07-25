@@ -7,10 +7,11 @@ import Dashboard from './pages/Dashboard';
 import SignIn from './pages/SignIn';
 import { GoogleOAuthProvider } from '@react-oauth/google';
 import MapViewer from './pages/MapViewer';
-import HomePage from './components/HomePage';
+import HomePage from './pages/ProfileEdit';
 import Home2 from './pages/Home2';
 import DrawMap from './pages/DrawMap';
 import { ThemeProvider } from './components/ThemeContext';
+import ProfileEdit from './pages/ProfileEdit';
 
 const GOOGLE_CLIENT_ID = process.env.REACT_APP_GOOGLE_CLIENT_ID;
 
@@ -25,14 +26,15 @@ function App() {
       <ThemeProvider>
       <Router>
         <Routes>
-          <Route path="/" element={<HomePage />} />
+          <Route path="/" element={<Home2 />} />
           <Route path="/signup" element={<SignUp />} />
           <Route path="/signin" element={<SignIn />} />
-          {/* <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} /> */}
-          <Route path="/dashboard" element={<Dashboard />} />
+          <Route path="/dashboard" element={<ProtectedRoute><Dashboard /></ProtectedRoute>} />
+          <Route path="/home" element={<Home2 />} />
+          <Route path="/ProfileEdit" element={<ProfileEdit/>} />
           <Route path="/map/:id" element={<MapViewer />} />
-          <Route path="/home2" element={<Home2 />} />
-            <Route path="/drawMap" element={<DrawMap />} />
+          
+            <Route path="/drawMap" element={<ProtectedRoute><DrawMap /></ProtectedRoute>} />
         </Routes>
       </Router>
       </ThemeProvider>

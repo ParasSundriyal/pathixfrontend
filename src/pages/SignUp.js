@@ -171,7 +171,8 @@ export default function SignUp() {
             }),
           });
         }
-        setMessage('Sign up successful! You can now sign in.');
+        setMessage('Sign up successful! Redirecting...');
+        setTimeout(() => window.location.href = '/dashboard', 1000);
         setForm({ name: '', email: '', password: '', phone: '', organization: '', confirmPassword: '' });
         setAvatarFile(null);
         setAvatarPreview(null);
