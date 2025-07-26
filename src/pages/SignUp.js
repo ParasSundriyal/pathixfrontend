@@ -139,7 +139,7 @@ export default function SignUp() {
             reader.onloadend = async () => {
               base64 = reader.result.split(',')[1];
               type = avatarFile.type;
-              await fetch('/api/auth/avatar', {
+              await fetch(`${process.env.REACT_APP_API_URL}/api/auth/avatar`, {
                 method: 'POST',
                 headers: {
                   'Content-Type': 'application/json',
@@ -159,7 +159,7 @@ export default function SignUp() {
             setAvatarPreview(null);
             return;
           }
-          await fetch('/api/auth/avatar', {
+          await fetch(`${process.env.REACT_APP_API_URL}/api/auth/avatar`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
@@ -187,6 +187,7 @@ export default function SignUp() {
 
   // Google login handler
   const handleGoogleSuccess = async (credentialResponse) => {
+    console.log('API URL:', process.env.REACT_APP_API_URL); // Temporary debug log
     setError('');
     setMessage('');
     setGoogleCredential(credentialResponse.credential);
@@ -200,12 +201,12 @@ export default function SignUp() {
       if (res.ok && data.token) {
         sessionStorage.setItem('token', data.token);
         // Fetch user info to get Google name and photo
-        const meRes = await fetch('/api/auth/me', { headers: { Authorization: `Bearer ${data.token}` } });
+        const meRes = await fetch(`${process.env.REACT_APP_API_URL}/api/auth/me`, { headers: { Authorization: `Bearer ${data.token}` } });
         const me = await meRes.json();
         // If no name, use email prefix
         if (!me.name && me.email) {
           const name = me.email.split('@')[0];
-          await fetch('/api/auth/me', {
+          await fetch(`${process.env.REACT_APP_API_URL}/api/auth/me`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.token}` },
             body: JSON.stringify({ name }),
