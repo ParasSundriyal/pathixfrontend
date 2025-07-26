@@ -223,18 +223,26 @@ const MapViewer = () => {
       ctx.textAlign = 'left';
       ctx.fillText('You', userX + 16, userY - 8);
       ctx.restore();
-      // Draw route to selected asset
-      if (navTarget) {
-        ctx.save();
-        ctx.beginPath();
-        ctx.moveTo(userX, userY);
-        ctx.lineTo(navTarget.x + (navTarget.width || 24), navTarget.y + (navTarget.height || 24));
-        ctx.strokeStyle = '#2563eb';
-        ctx.lineWidth = 5;
-        ctx.setLineDash([12, 10]);
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.restore();
+      // Draw route to selected asset (along the path)
+      if (navTarget && Array.isArray(map.gpsPath) && map.gpsPath.length > 1) {
+        // Snap user and target to path
+        const { idx: userIdx } = snapToPath({ x: userX, y: userY }, map.gpsPath);
+        const { idx: targetIdx } = snapToPath(navTarget, map.gpsPath);
+        const route = userIdx <= targetIdx ? map.gpsPath.slice(userIdx, targetIdx + 1) : map.gpsPath.slice(targetIdx, userIdx + 1).reverse();
+        if (route.length > 1) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.moveTo(route[0].x, route[0].y);
+          for (let i = 1; i < route.length; i++) {
+            ctx.lineTo(route[i].x, route[i].y);
+          }
+          ctx.strokeStyle = '#2563eb';
+          ctx.lineWidth = 5;
+          ctx.setLineDash([12, 10]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          ctx.restore();
+        }
       }
     }
     // Draw map name
@@ -289,14 +297,20 @@ const MapViewer = () => {
 
   // Calculate distance to target when userLocation or navTarget changes
   useEffect(() => {
-    if (!userLocation || !navTarget || !mapData?.gpsOrigin || !mapData?.gpsScale) {
+    if (!userLocation || !navTarget) {
+      setDistanceToTarget(null);
+      return;
+    }
+    // Use mapData.data if present, else mapData (same logic as in the drawing useEffect)
+    const map = mapData.data ? mapData.data : mapData;
+    if (!map?.gpsOrigin || !map?.gpsScale) {
       setDistanceToTarget(null);
       return;
     }
     // Convert asset x/y to lat/lng
     const { x, y } = navTarget;
-    const { lat: originLat, lng: originLng } = mapData.gpsOrigin;
-    const gpsScale = mapData.gpsScale;
+    const { lat: originLat, lng: originLng } = map.gpsOrigin;
+    const gpsScale = map.gpsScale;
     const assetLng = originLng + (x - BASE_CANVAS_WIDTH / 2) / gpsScale;
     const assetLat = originLat - (y - BASE_CANVAS_HEIGHT / 2) / gpsScale;
     const d = haversine(userLocation.lat, userLocation.lng, assetLat, assetLng);
@@ -305,21 +319,27 @@ const MapViewer = () => {
 
   // Advanced turn-by-turn navigation logic
   useEffect(() => {
-    if (!userLocation || !navTarget || !mapData?.gpsOrigin || !mapData?.gpsScale || !Array.isArray(mapData.gpsPath)) {
+    if (!userLocation || !navTarget) {
+      setCurrentInstruction('');
+      return;
+    }
+    // Use mapData.data if present, else mapData (same logic as in the drawing useEffect)
+    const map = mapData.data ? mapData.data : mapData;
+    if (!map?.gpsOrigin || !map?.gpsScale || !Array.isArray(map.gpsPath)) {
       setCurrentInstruction('');
       return;
     }
     // Convert user GPS to canvas coordinates
-    const { lat: originLat, lng: originLng } = mapData.gpsOrigin;
-    const gpsScale = mapData.gpsScale;
+    const { lat: originLat, lng: originLng } = map.gpsOrigin;
+    const gpsScale = map.gpsScale;
     const userX = BASE_CANVAS_WIDTH / 2 + (userLocation.lng - originLng) * gpsScale;
     const userY = BASE_CANVAS_HEIGHT / 2 - (userLocation.lat - originLat) * gpsScale;
     // Snap user to path
-    const { idx: userIdx } = snapToPath({ x: userX, y: userY }, mapData.gpsPath);
+    const { idx: userIdx } = snapToPath({ x: userX, y: userY }, map.gpsPath);
     // Snap target to path
-    const { idx: targetIdx } = snapToPath(navTarget, mapData.gpsPath);
+    const { idx: targetIdx } = snapToPath(navTarget, map.gpsPath);
     // Route is from userIdx to targetIdx
-    const route = userIdx <= targetIdx ? mapData.gpsPath.slice(userIdx, targetIdx + 1) : mapData.gpsPath.slice(targetIdx, userIdx + 1).reverse();
+    const route = userIdx <= targetIdx ? map.gpsPath.slice(userIdx, targetIdx + 1) : map.gpsPath.slice(targetIdx, userIdx + 1).reverse();
     // If at the end, arrived
     if (route.length < 2) {
       setCurrentInstruction('You have arrived at your destination.');
@@ -407,12 +427,19 @@ const MapViewer = () => {
     setLocationError('');
     setShowNavModal(true);
     // Prepare asset list (landmarks)
-    if (Array.isArray(mapData?.landmarks)) {
-      setAssetsList(mapData.landmarks.map((lm, i) => ({
+    // Use mapData.data if present, else mapData (same logic as in the drawing useEffect)
+    const map = mapData.data ? mapData.data : mapData;
+    console.log('Map data structure:', { mapData, map });
+    console.log('Landmarks found:', map?.landmarks);
+    if (Array.isArray(map?.landmarks)) {
+      const assets = map.landmarks.map((lm, i) => ({
         ...lm,
         displayName: lm.label || lm.name || `Asset #${i + 1}`
-      })));
+      }));
+      console.log('Processed assets:', assets);
+      setAssetsList(assets);
     } else {
+      console.log('No landmarks array found');
       setAssetsList([]);
     }
   };
