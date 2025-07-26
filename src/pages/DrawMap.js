@@ -4,7 +4,7 @@
 //
 // Main features:
 // - Asset placement and editing
-// - GPS route tracking (with Kalman filter smoothing)
+// - GPS route tracking (with Kalman filter smoothing and pause/resume)
 // - Map name editing
 // - Theme switching
 // - Export/save map data
@@ -56,7 +56,7 @@ class SimpleKalmanFilter {
 }
 
 const DrawMap = () => {
-  // Tool mode: 'pointer', 'grab', or 'point'
+  // Tool mode: 'pointer', 'grab', 'point', or 'move'
   const [toolMode, setToolMode] = useState('pointer');
   // Store original asset data for restoring after point tool
   const [originalLandmarks, setOriginalLandmarks] = useState([]);
@@ -73,13 +73,15 @@ const DrawMap = () => {
   const [selectedLandmark, setSelectedLandmark] = useState(null); // for label popup
   // GPS tracking state
   const [gpsTracking, setGpsTracking] = useState(false);
+  const [gpsPaused, setGpsPaused] = useState(false); // New: GPS pause state
   const [gpsPath, setGpsPath] = useState([]); // [{x, y}]
+  const [gpsSegments, setGpsSegments] = useState([]); // Array of path segments for disconnected routes
   // Zoom and pan state
   const [zoom, setZoom] = useState(1);
   const [stagePos, setStagePos] = useState({ x: 0, y: 0 });
   // Show login modal for saving/exporting
   const [showLogin, setShowLogin] = useState(false);
-  // GPS status string (OFF, ON, SIM)
+  // GPS status string (OFF, ON, SIM, PAUSED)
   const [gpsStatus, setGpsStatus] = useState('OFF');
   // Background image object for the map
   const [bgImageObj, setBgImageObj] = useState(null);
@@ -96,6 +98,7 @@ const DrawMap = () => {
   // State for asset placement and selection
   const [pendingAsset, setPendingAsset] = useState(null); // asset to place
   const [selectedAssetIdx, setSelectedAssetIdx] = useState(null);
+  const [movingAssetIdx, setMovingAssetIdx] = useState(null); // Asset being moved
 
   // Add state to track if any asset is being dragged
   const [assetDragging, setAssetDragging] = useState(false);
@@ -108,16 +111,19 @@ const DrawMap = () => {
       setToolMode('grab');
     } else if (toolMode === 'point') {
       // If point tool is active, do not toggle pointer/pan
-      // Optionally, you can allow switching, but for now, keep point tool exclusive
       return;
     }
+    // Clear any pending operations
+    setPendingAsset(null);
+    setMovingAssetIdx(null);
+    setPointerPos(null);
   };
 
   // Handler to toggle point tool and convert all assets to points, restore on toggle off
   const activatePointTool = () => {
     if (toolMode === 'point') {
       // Restore original icons, width, height
-      setLandmarks(originalLandmarks.length ? originalLandmarks : (lm => lm));
+      setLandmarks(originalLandmarks.length ? originalLandmarks : landmarks);
       setToolMode('pointer');
     } else {
       // Save current state for restoration
@@ -131,6 +137,10 @@ const DrawMap = () => {
       })));
       setToolMode('point');
     }
+    // Clear any pending operations
+    setPendingAsset(null);
+    setMovingAssetIdx(null);
+    setPointerPos(null);
   };
 
   // Utility: Convert lat/lng to canvas coordinates based on origin
@@ -153,24 +163,55 @@ const DrawMap = () => {
     }
   }, [currentTheme]);
 
-  // Drag and drop asset logic
-  // When drag starts from AssetPanel, store asset in ref
-  const handleAssetDragStart = () => setAssetDragging(true);
-  // When drag ends on canvas, place asset at pointer position
+  // Improved drag and drop asset logic for desktop
+  const handleAssetDragStart = (asset) => {
+    dragAsset.current = asset;
+    setAssetDragging(true);
+  };
+
   const handleAssetDragEnd = (e) => {
+    setAssetDragging(false);
     if (!dragAsset.current) return;
-    const stage = stageRef.current.getStage();
+    
+    const stage = stageRef.current?.getStage();
+    if (!stage) return;
+    
     const pointer = stage.getPointerPosition();
-    setLandmarks([...landmarks, { ...dragAsset.current, x: pointer.x, y: pointer.y, label: '' }]);
+    if (!pointer) return;
+
+    // Convert screen coordinates to stage coordinates
+    const transform = stage.getAbsoluteTransform().copy();
+    transform.invert();
+    const stagePoint = transform.point(pointer);
+
+    const newAsset = {
+      ...dragAsset.current,
+      x: stagePoint.x,
+      y: stagePoint.y,
+      width: toolMode === 'point' ? 18 : 48,
+      height: toolMode === 'point' ? 18 : 48,
+      icon: toolMode === 'point' ? '+' : dragAsset.current.icon,
+      label: ''
+    };
+
+    // Handle image assets
+    if (newAsset.icon && newAsset.icon.startsWith('http')) {
+      const img = new window.Image();
+      img.src = newAsset.icon;
+      img.onload = () => {
+        newAsset._imgObj = img;
+        setLandmarks(prev => [...prev, newAsset]);
+      };
+    } else {
+      setLandmarks(prev => [...prev, newAsset]);
+    }
+
     dragAsset.current = null;
   };
 
   // Landmark label popup logic
-  // Open label editor for a landmark
   const openLabelPopup = (idx) => setSelectedLandmark(idx);
-  // Close label editor
   const closeLabelPopup = () => setSelectedLandmark(null);
-  // Add local state for label input
   const [labelInput, setLabelInput] = useState("");
 
   // When opening label popup, set labelInput to current label
@@ -185,73 +226,96 @@ const DrawMap = () => {
     setLandmarks(landmarks => landmarks.map((lm, i) => i === idx ? { ...lm, label: labelInput } : lm));
     closeLabelPopup();
   };
+
   // Delete a landmark
   const deleteLandmark = (idx) => {
     setLandmarks(landmarks => landmarks.filter((_, i) => i !== idx));
+    setSelectedAssetIdx(null);
     closeLabelPopup();
   };
 
-  // When asset is clicked in AssetPanel, set as pending for placement
+  // Improved asset click handling for mobile
   const handleAssetClick = (asset) => {
-    setPendingAsset({ ...asset });
+    if (isMobile()) {
+      // On mobile, directly set pending asset for placement
+      setPendingAsset({ ...asset });
+      setMovingAssetIdx(null);
+    } else {
+      // On desktop, use drag and drop
+      handleAssetDragStart(asset);
+    }
   };
 
   // Helper: check if pointer is near any asset (for mobile touch tolerance)
-  function isPointerNearAnyAsset(pointer, tolerance = 24) {
+  function isPointerNearAnyAsset(pointer, tolerance = 32) {
     if (!pointer) return false;
-    for (const lm of landmarks) {
-      const x1 = lm.x - tolerance;
-      const y1 = lm.y - tolerance;
-      const x2 = (lm.x + (lm.width || 48) + tolerance);
-      const y2 = (lm.y + (lm.height || 48) + tolerance);
+    for (let i = 0; i < landmarks.length; i++) {
+      const lm = landmarks[i];
+      const w = lm.width || 48;
+      const h = lm.height || 48;
+      const x1 = lm.x - w/2 - tolerance;
+      const y1 = lm.y - h/2 - tolerance;
+      const x2 = lm.x + w/2 + tolerance;
+      const y2 = lm.y + h/2 + tolerance;
       if (pointer.x >= x1 && pointer.x <= x2 && pointer.y >= y1 && pointer.y <= y2) {
-        return true;
+        return i;
       }
     }
-    return false;
+    return -1;
   }
 
-  // Place asset on canvas at pointer or center
+  // Improved canvas click handling
   const handleCanvasClick = (e) => {
+    const stage = stageRef.current?.getStage();
+    if (!stage) return;
+
+    const pointer = stage.getPointerPosition();
+    if (!pointer) return;
+
+    // Convert screen coordinates to stage coordinates
+    const transform = stage.getAbsoluteTransform().copy();
+    transform.invert();
+    const stagePoint = transform.point(pointer);
+
     if (pendingAsset) {
-      const stage = stageRef.current.getStage();
-      const pointer = stage.getPointerPosition();
-      let x = pointer ? pointer.x : CANVAS_WIDTH / 2;
-      let y = pointer ? pointer.y : CANVAS_HEIGHT / 2;
-      let assetToPlace;
-      if (toolMode === 'point') {
-        // Place as a point (small dot or special icon)
-        assetToPlace = {
-          ...pendingAsset,
-          x,
-          y,
-          width: 18,
-          height: 18,
-          icon: '+', // Use a dot, or change to any icon you want
-        };
-      } else {
-        assetToPlace = { ...pendingAsset, x, y, width: 48, height: 48 };
-      }
+      // Place new asset
+      const assetToPlace = {
+        ...pendingAsset,
+        x: stagePoint.x,
+        y: stagePoint.y,
+        width: toolMode === 'point' ? 18 : 48,
+        height: toolMode === 'point' ? 18 : 48,
+        icon: toolMode === 'point' ? '+' : pendingAsset.icon,
+        label: ''
+      };
+
       if (assetToPlace.icon && assetToPlace.icon.startsWith('http')) {
         const img = new window.Image();
         img.src = assetToPlace.icon;
         img.onload = () => {
           assetToPlace._imgObj = img;
-          setLandmarks((prev) => [...prev, assetToPlace]);
+          setLandmarks(prev => [...prev, assetToPlace]);
         };
       } else {
-        setLandmarks((prev) => [...prev, assetToPlace]);
+        setLandmarks(prev => [...prev, assetToPlace]);
       }
+
       setPendingAsset(null);
       setPointerPos(null);
+    } else if (movingAssetIdx !== null) {
+      // Move existing asset
+      setLandmarks(landmarks => landmarks.map((lm, i) => 
+        i === movingAssetIdx 
+          ? { ...lm, x: stagePoint.x, y: stagePoint.y }
+          : lm
+      ));
+      setMovingAssetIdx(null);
+      setPointerPos(null);
     } else {
-      // On mobile, only unselect if not near any asset
-      const stage = stageRef.current.getStage();
-      const pointer = stage.getPointerPosition();
-      if (isMobile()) {
-        if (!isPointerNearAnyAsset(pointer, 24)) {
-          setSelectedAssetIdx(null);
-        }
+      // Check if clicking near an asset for selection
+      const nearAssetIdx = isPointerNearAnyAsset(stagePoint, 24);
+      if (nearAssetIdx >= 0) {
+        setSelectedAssetIdx(nearAssetIdx);
       } else {
         setSelectedAssetIdx(null);
       }
@@ -260,28 +324,59 @@ const DrawMap = () => {
 
   // Track pointer position for marker while placing asset
   const handleStageMouseMove = (e) => {
-    if (pendingAsset && stageRef.current) {
+    if ((pendingAsset || movingAssetIdx !== null) && stageRef.current) {
       const stage = stageRef.current.getStage();
       const pointer = stage.getPointerPosition();
-      setPointerPos(pointer);
+      if (pointer) {
+        const transform = stage.getAbsoluteTransform().copy();
+        transform.invert();
+        const stagePoint = transform.point(pointer);
+        setPointerPos(stagePoint);
+      }
     }
   };
+
   const handleStageTouchMove = (e) => {
-    if (pendingAsset && stageRef.current) {
+    if ((pendingAsset || movingAssetIdx !== null) && stageRef.current) {
       const stage = stageRef.current.getStage();
       const pointer = stage.getPointerPosition();
-      setPointerPos(pointer);
+      if (pointer) {
+        const transform = stage.getAbsoluteTransform().copy();
+        transform.invert();
+        const stagePoint = transform.point(pointer);
+        setPointerPos(stagePoint);
+      }
     }
   };
 
   // Asset selection and editing logic
-  const handleSelectAsset = (idx) => setSelectedAssetIdx(idx);
-  const handleEditAsset = (idx) => openLabelPopup(idx);
-  const handleDeleteAsset = (idx) => deleteLandmark(idx);
+  const handleSelectAsset = (idx) => {
+    setSelectedAssetIdx(idx);
+  };
+
+  const handleEditAsset = (idx) => {
+    openLabelPopup(idx);
+  };
+
+  const handleDeleteAsset = (idx) => {
+    deleteLandmark(idx);
+  };
+
+  // Start moving an asset
+  const handleMoveAsset = (idx) => {
+    setMovingAssetIdx(idx);
+    setSelectedAssetIdx(null);
+  };
+
   // Update asset position after drag
-  const handleDragAsset = (idx, updated) => setLandmarks(lms => lms.map((l, i) => i === idx ? updated : l));
+  const handleDragAsset = (idx, updated) => {
+    setLandmarks(lms => lms.map((l, i) => i === idx ? updated : l));
+  };
+
   // Update asset size after resize
-  const handleResizeAsset = (idx, updated) => setLandmarks(lms => lms.map((l, i) => i === idx ? updated : l));
+  const handleResizeAsset = (idx, updated) => {
+    setLandmarks(lms => lms.map((l, i) => i === idx ? updated : l));
+  };
 
   // Map name editing logic
   const handleMapNameEdit = () => setEditingMapName(true);
@@ -302,27 +397,40 @@ const DrawMap = () => {
       { x: 700, y: 160 },
     ];
     setGpsPath(route);
+    setGpsSegments([route]); // Add as a segment
     setGpsStatus('SIM');
   };
+
   // Start GPS tracking (uses Kalman filter for smoothing)
   const handleStartGps = () => {
     if (!navigator.geolocation) {
       alert('Geolocation is not supported by your browser.');
       return;
     }
+
     setGpsTracking(true);
+    setGpsPaused(false);
     setGpsStatus('ON');
-    setGpsPath([]);
-    setGpsOrigin(null);
-    gpsOriginRef.current = null;
-    gpsLatKalman.current = new SimpleKalmanFilter();
-    gpsLngKalman.current = new SimpleKalmanFilter();
+    
+    // If this is a fresh start, reset everything
+    if (gpsPath.length === 0) {
+      setGpsPath([]);
+      setGpsSegments([]);
+      setGpsOrigin(null);
+      gpsOriginRef.current = null;
+      gpsLatKalman.current = new SimpleKalmanFilter();
+      gpsLngKalman.current = new SimpleKalmanFilter();
+    }
+
     if (gpsWatchId) {
       navigator.geolocation.clearWatch(gpsWatchId);
       setGpsWatchId(null);
     }
+
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
+        if (gpsPaused) return; // Don't add points when paused
+
         const { latitude: lat, longitude: lng } = pos.coords;
         if (!gpsOriginRef.current) {
           setGpsOrigin({ lat, lng });
@@ -345,10 +453,35 @@ const DrawMap = () => {
     setGpsWatchId(watchId);
   };
 
+  // Pause GPS tracking
+  const handlePauseGps = () => {
+    if (gpsTracking && !gpsPaused) {
+      setGpsPaused(true);
+      setGpsStatus('PAUSED');
+      // Save current path as a segment
+      if (gpsPath.length > 0) {
+        setGpsSegments(prev => [...prev, [...gpsPath]]);
+        setGpsPath([]); // Clear current path for next segment
+      }
+    } else if (gpsTracking && gpsPaused) {
+      setGpsPaused(false);
+      setGpsStatus('ON');
+      // Resume tracking - new points will be added to gpsPath
+    }
+  };
+
   // Stop GPS tracking
   const handleStopGps = () => {
     setGpsTracking(false);
+    setGpsPaused(false);
     setGpsStatus('OFF');
+    
+    // Save current path as final segment
+    if (gpsPath.length > 0) {
+      setGpsSegments(prev => [...prev, [...gpsPath]]);
+      setGpsPath([]); // Clear current path
+    }
+    
     if (gpsWatchId) {
       navigator.geolocation.clearWatch(gpsWatchId);
       setGpsWatchId(null);
@@ -358,11 +491,13 @@ const DrawMap = () => {
   // Reset GPS and map state
   const handleReset = () => {
     setGpsPath([]);
+    setGpsSegments([]);
     setGpsOrigin(null);
     gpsOriginRef.current = null;
     gpsLatKalman.current = null;
     gpsLngKalman.current = null;
     setGpsTracking(false);
+    setGpsPaused(false);
     setGpsStatus('OFF');
     if (gpsWatchId) {
       navigator.geolocation.clearWatch(gpsWatchId);
@@ -374,6 +509,7 @@ const DrawMap = () => {
   const handleZoom = (factor) => {
     setZoom(z => Math.max(0.5, Math.min(4, z * factor)));
   };
+
   // Update stage position after drag
   const handleStageDragEnd = (e) => {
     setStagePos({ x: e.target.x(), y: e.target.y() });
@@ -389,6 +525,7 @@ const DrawMap = () => {
     const data = {
       name: mapName,
       gpsPath,
+      gpsSegments,
       landmarks,
       theme: currentTheme,
       gpsOrigin: gpsOriginRef.current,
@@ -425,6 +562,7 @@ const DrawMap = () => {
     const data = {
       name: mapName,
       gpsPath,
+      gpsSegments,
       landmarks,
       theme: currentTheme?._id,
       gpsOrigin: gpsOriginRef.current,
@@ -473,6 +611,7 @@ const DrawMap = () => {
         </div>
         <div className="subtitle text-gray-400 dark:text-blue-100 text-m mt-1 ml-2 font-sans">Design, annotate, and export property maps with ease</div>
       </header>
+
       {/* Main Layout */}
       <div className="main-layout flex flex-col md:flex-row max-w-6xl mx-auto w-full gap-4 px-2 font-sans">
         {/* Map Area */}
@@ -481,7 +620,8 @@ const DrawMap = () => {
           <div className="toolbar flex flex-wrap items-center gap-3 mb-4 w-full justify-center">
             <label className="font-semibold text-blue-100 font-sans">Theme:</label>
             <ThemeSwitcher />
-            {/* Pointer/Grab icon button */}
+            
+            {/* Tool buttons */}
             <button
               className={`rounded-full w-12 h-12 flex items-center justify-center text-2xl shadow-lg transition focus:outline-none focus:ring-2 focus:ring-blue-400 ${toolMode === 'grab' ? 'bg-yellow-500 text-black' : 'bg-blue-500 text-white'}`}
               onClick={togglePointerPan}
@@ -494,7 +634,7 @@ const DrawMap = () => {
                 <span role="img" aria-label="Pointer">🖱️</span>
               )}
             </button>
-            {/* Point Tool icon button */}
+            
             <button
               className={`rounded-full w-12 h-12 flex items-center justify-center text-2xl shadow-lg transition focus:outline-none focus:ring-2 focus:ring-blue-400 ${toolMode === 'point' ? 'bg-pink-500 text-white' : 'bg-gray-200 text-gray-700'}`}
               onClick={activatePointTool}
@@ -503,8 +643,33 @@ const DrawMap = () => {
             >
               <span role="img" aria-label="Point">📍</span>
             </button>
-            <button className="rounded-xl bg-blue-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" onClick={handleStartGps} disabled={gpsTracking}>Start GPS Tracking</button>
-            <button className="rounded-xl bg-blue-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" onClick={handleStopGps} disabled={!gpsTracking}>Stop GPS Tracking</button>
+
+            {/* GPS Controls */}
+            <button 
+              className="rounded-xl bg-green-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-400" 
+              onClick={handleStartGps} 
+              disabled={gpsTracking && !gpsPaused}
+            >
+              {gpsTracking ? 'Resume GPS' : 'Start GPS'}
+            </button>
+            
+            <button 
+              className="rounded-xl bg-yellow-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-yellow-700 focus:outline-none focus:ring-2 focus:ring-yellow-400" 
+              onClick={handlePauseGps} 
+              disabled={!gpsTracking}
+            >
+              {gpsPaused ? 'Resume' : 'Pause'}
+            </button>
+            
+            <button 
+              className="rounded-xl bg-red-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-400" 
+              onClick={handleStopGps} 
+              disabled={!gpsTracking}
+            >
+              Stop GPS
+            </button>
+
+            {/* Export and other controls */}
             <div className="relative inline-block">
               <button className="rounded-xl bg-blue-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" onClick={() => setShowExportMenu(v => !v)}>
                 Export
@@ -517,13 +682,16 @@ const DrawMap = () => {
                 </div>
               )}
             </div>
+            
             <button className="rounded-xl bg-blue-600 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-400" onClick={handleSimulateRoute}>Simulate Route</button>
             <button className="rounded-xl bg-red-500 text-white py-2 px-5 font-bold shadow-lg transition hover:bg-red-600 focus:outline-none focus:ring-2 focus:ring-red-400" onClick={handleReset}>Reset</button>
-            <div className={`gps-status flex items-center gap-1 ml-2 px-3 py-1 rounded-full bg-white/10 text-xs font-semibold ${gpsStatus === 'ON' ? 'text-green-400' : gpsStatus === 'SIM' ? 'text-yellow-400' : 'text-gray-400'}`}>
-              <span className="dot w-2 h-2 rounded-full inline-block" style={{ background: gpsStatus === 'ON' ? '#16a34a' : gpsStatus === 'SIM' ? '#facc15' : '#9ca3af' }}></span>
-              GPS Tracking: {gpsStatus}
+            
+            <div className={`gps-status flex items-center gap-1 ml-2 px-3 py-1 rounded-full bg-white/10 text-xs font-semibold ${gpsStatus === 'ON' ? 'text-green-400' : gpsStatus === 'PAUSED' ? 'text-yellow-400' : gpsStatus === 'SIM' ? 'text-blue-400' : 'text-gray-400'}`}>
+              <span className="dot w-2 h-2 rounded-full inline-block" style={{ background: gpsStatus === 'ON' ? '#16a34a' : gpsStatus === 'PAUSED' ? '#facc15' : gpsStatus === 'SIM' ? '#3b82f6' : '#9ca3af' }}></span>
+              GPS: {gpsStatus}
             </div>
           </div>
+
           {/* Map Canvas Card */}
           <div className="map-canvas-card relative w-full flex justify-center items-center rounded-2xl shadow-lg border border-white/10 dark:border-gray-700 bg-white/10 dark:bg-gray-900/80 overflow-hidden" style={{ minHeight: CANVAS_HEIGHT + 40 }}>
             {/* Zoom controls (mobile) */}
@@ -533,6 +701,19 @@ const DrawMap = () => {
                 <button className="rounded-full bg-blue-600 text-white w-12 h-12 text-2xl shadow hover:bg-blue-700" onClick={() => handleZoom(0.9)}>-</button>
               </div>
             )}
+
+            {/* Status indicators */}
+            {pendingAsset && (
+              <div className="absolute top-4 left-4 bg-blue-600 text-white px-3 py-1 rounded-full text-xs font-semibold z-10">
+                Tap to place: {pendingAsset.name}
+              </div>
+            )}
+            {movingAssetIdx !== null && (
+              <div className="absolute top-4 left-4 bg-orange-600 text-white px-3 py-1 rounded-full text-xs font-semibold z-10">
+                Tap to move: {landmarks[movingAssetIdx]?.name}
+              </div>
+            )}
+
             {/* Konva Stage */}
             <Stage
               width={CANVAS_WIDTH}
@@ -542,14 +723,14 @@ const DrawMap = () => {
               x={stagePos.x}
               y={stagePos.y}
               ref={stageRef}
-              draggable={toolMode === 'grab' && !assetDragging}
+              draggable={toolMode === 'grab' && !assetDragging && !pendingAsset && movingAssetIdx === null}
               onDragEnd={handleStageDragEnd}
               className="rounded-lg border shadow"
               style={{ background: 'transparent', cursor: toolMode === 'grab' ? 'grab' : 'default' }}
               onContentDrop={handleAssetDragEnd}
               onContentMouseUp={handleAssetDragEnd}
-              onClick={toolMode === 'pointer' || toolMode === 'point' ? handleCanvasClick : undefined}
-              onTap={toolMode === 'pointer' || toolMode === 'point' ? handleCanvasClick : undefined}
+              onClick={handleCanvasClick}
+              onTap={handleCanvasClick}
               onMouseMove={handleStageMouseMove}
               onTouchMove={handleStageTouchMove}
             >
@@ -558,8 +739,8 @@ const DrawMap = () => {
                 {bgImageObj && (
                   <KonvaImage image={bgImageObj} x={0} y={0} width={CANVAS_WIDTH} height={CANVAS_HEIGHT} />
                 )}
+
                 {/* Canvas Scale Reference (bottom left) */}
-                {/* 100 meters scale bar, adjust gpsScale if needed */}
                 <Group x={30} y={CANVAS_HEIGHT - 40}>
                   <Line
                     points={[0, 0, 100, 0]}
@@ -579,6 +760,7 @@ const DrawMap = () => {
                     shadowBlur={2}
                   />
                 </Group>
+
                 {/* Editable Map Name */}
                 <Text
                   text={mapName}
@@ -592,16 +774,33 @@ const DrawMap = () => {
                   onClick={handleMapNameEdit}
                   style={{ cursor: 'pointer' }}
                 />
-                {/* GPS Road Path */}
+
+                {/* GPS Path Segments (completed paths) */}
+                {gpsSegments.map((segment, idx) => 
+                  segment.length > 1 && (
+                    <Line
+                      key={`segment-${idx}`}
+                      points={segment.flatMap(pt => [pt.x, pt.y])}
+                      stroke={currentTheme?.roadStyle?.color || '#eebbc3'}
+                      strokeWidth={currentTheme?.roadStyle?.width || 8}
+                      lineCap={currentTheme?.roadStyle?.lineCap || 'round'}
+                      lineJoin={currentTheme?.roadStyle?.lineJoin || 'round'}
+                    />
+                  )
+                )}
+
+                {/* Current GPS Path (active recording) */}
                 {gpsPath.length > 1 && (
                   <Line
                     points={gpsPath.flatMap(pt => [pt.x, pt.y])}
-                    stroke={currentTheme?.roadStyle?.color || '#eebbc3'}
+                    stroke={gpsPaused ? '#facc15' : (currentTheme?.roadStyle?.color || '#eebbc3')}
                     strokeWidth={currentTheme?.roadStyle?.width || 8}
                     lineCap={currentTheme?.roadStyle?.lineCap || 'round'}
                     lineJoin={currentTheme?.roadStyle?.lineJoin || 'round'}
+                    dash={gpsPaused ? [10, 5] : undefined}
                   />
                 )}
+
                 {/* Placed assets (landmarks) */}
                 {landmarks.map((lm, idx) => (
                   <PlacedAsset
@@ -611,33 +810,47 @@ const DrawMap = () => {
                     onSelect={toolMode === 'pointer' ? () => handleSelectAsset(idx) : undefined}
                     onEdit={toolMode === 'pointer' ? () => handleEditAsset(idx) : undefined}
                     onDelete={toolMode === 'pointer' ? () => handleDeleteAsset(idx) : undefined}
+                    onMove={toolMode === 'pointer' ? () => handleMoveAsset(idx) : undefined}
                     onDrag={toolMode === 'pointer' ? updated => handleDragAsset(idx, updated) : undefined}
                     onResize={toolMode === 'pointer' ? updated => handleResizeAsset(idx, updated) : undefined}
                     onDragStart={() => setAssetDragging(true)}
                     onDragEnd={() => setAssetDragging(false)}
                   />
                 ))}
-                {/* Marker for asset placement anchor */}
-                {pendingAsset && pointerPos && (
+
+                {/* Marker for asset placement/movement anchor */}
+                {(pendingAsset || movingAssetIdx !== null) && pointerPos && (
                   <Group x={pointerPos.x} y={pointerPos.y}>
                     <Line points={[-10,0,10,0]} stroke="#e11d48" strokeWidth={2} />
                     <Line points={[0,-10,0,10]} stroke="#e11d48" strokeWidth={2} />
-                    <Text text="Anchor" x={12} y={-8} fontSize={14} fill="#e11d48" />
+                    <Text 
+                      text={movingAssetIdx !== null ? "Move Here" : "Place Here"} 
+                      x={12} 
+                      y={-8} 
+                      fontSize={14} 
+                      fill="#e11d48" 
+                      fontStyle="bold"
+                      shadowColor="#fff"
+                      shadowBlur={1}
+                    />
                   </Group>
                 )}
               </Layer>
             </Stage>
           </div>
         </div>
+
         {/* Asset Panel (side on desktop only) */}
         <div className="hidden md:block w-80 rounded-2xl shadow-lg bg-white/10 dark:bg-gray-900/80 border border-white/10 dark:border-gray-700 mt-0">
           <AssetPanel assets={assets} onDragStart={handleAssetClick} />
         </div>
       </div>
+
       {/* Asset Panel (below map on mobile only) */}
       <div className="block md:hidden w-full mt-2 px-2">
         <AssetPanel assets={assets} onDragStart={handleAssetClick} />
       </div>
+
       {/* Landmark Label Popup */}
       {selectedLandmark !== null && (
         <div className="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-30">
@@ -651,13 +864,14 @@ const DrawMap = () => {
               placeholder="Enter name or description..."
             />
             <div className="flex gap-2 justify-end">
-              <button className="btn" onClick={() => saveLandmarkLabel(selectedLandmark)}>Save</button>
-              <button className="btn" onClick={closeLabelPopup}>Cancel</button>
-              <button className="btn text-red-600" onClick={() => deleteLandmark(selectedLandmark)}>Delete</button>
+              <button className="btn bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700" onClick={() => saveLandmarkLabel(selectedLandmark)}>Save</button>
+              <button className="btn bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700" onClick={closeLabelPopup}>Cancel</button>
+              <button className="btn bg-red-600 text-white px-4 py-2 rounded hover:bg-red-700" onClick={() => deleteLandmark(selectedLandmark)}>Delete</button>
             </div>
           </div>
         </div>
       )}
+
       {/* Map Name Edit Popup */}
       {editingMapName && (
         <div className="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-30">
@@ -671,12 +885,13 @@ const DrawMap = () => {
               placeholder="Enter map name..."
             />
             <div className="flex gap-2 justify-end">
-              <button className="btn" type="submit">Save</button>
-              <button className="btn" type="button" onClick={() => setEditingMapName(false)}>Cancel</button>
+              <button className="btn bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700" type="submit">Save</button>
+              <button className="btn bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700" type="button" onClick={() => setEditingMapName(false)}>Cancel</button>
             </div>
           </form>
         </div>
       )}
+
       {/* Login Modal (for Save) */}
       {showLogin && (
         <div className="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-30">
@@ -685,12 +900,13 @@ const DrawMap = () => {
             <input className="w-full p-2 rounded border mb-2" type="text" placeholder="Username" />
             <input className="w-full p-2 rounded border mb-2" type="password" placeholder="Password" />
             <div className="flex gap-2 justify-end">
-              <button className="btn" onClick={() => setShowLogin(false)}>Login</button>
-              <button className="btn" onClick={() => setShowLogin(false)}>Cancel</button>
+              <button className="btn bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700" onClick={() => setShowLogin(false)}>Login</button>
+              <button className="btn bg-gray-600 text-white px-4 py-2 rounded hover:bg-gray-700" onClick={() => setShowLogin(false)}>Cancel</button>
             </div>
           </div>
         </div>
       )}
+
       {/* QR Code Modal */}
       {showQR && (
         <div className="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-30">
@@ -700,14 +916,15 @@ const DrawMap = () => {
               <img src={`https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(qrLink)}`} alt="QR Code" />
             )}
             <div className="mt-2 break-all text-xs text-blue-600 dark:text-blue-300">{qrLink}</div>
-            <button className="btn mt-4" onClick={() => setShowQR(false)}>Close</button>
+            <button className="btn bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 mt-4" onClick={() => setShowQR(false)}>Close</button>
           </div>
         </div>
       )}
+
       {/* Footer */}
       <footer className="text-center text-gray-400 text-xs my-4">&copy; 2024 Pathix &mdash; Crafted with <span className="text-pink-500">&#10084;&#65039;</span></footer>
     </div>
   );
 };
 
-export default DrawMap; 
+export default DrawMap;

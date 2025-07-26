@@ -1,29 +1,19 @@
 // PlacedAsset.js
 // This component renders a draggable, resizable, and selectable asset (icon or image) on a Konva canvas.
-// It supports selection, editing, deletion, and resizing via handles, and displays a menu when selected.
-// Props:
-//   asset: {icon, name, label, x, y, width, height, _imgObj} - the asset to render
-//   selected: boolean - whether this asset is currently selected
-//   onSelect: function - called when asset is selected
-//   onEdit: function - called when edit button is clicked
-//   onDelete: function - called when delete button is clicked
-//   onDrag: function - called when asset is dragged
-//   onResize: function - called when asset is resized
-//   stageScale: number - current canvas scale (for future use)
-//
+// It supports selection, editing, deletion, moving, and resizing via handles, and displays a menu when selected.
+// Enhanced for better mobile support with improved touch handling and visual feedback.
+
 import React, { useRef, useState, useEffect, useCallback } from 'react';
 import PropTypes from 'prop-types';
-import { Group, Rect, Text, Image as KonvaImage } from 'react-konva';
+import { Group, Rect, Text, Image as KonvaImage, Circle } from 'react-konva';
 
-/**
- * PlacedAsset renders a draggable, resizable, selectable asset on the canvas.
- * - Shows border and menu (edit, delete, drag handle) when selected.
- * - Resize handles at corners.
- * - Works with mouse and touch.
- * - Props: asset (icon, name, label, x, y, width, height), selected, onSelect, onEdit, onDelete, onDrag, onResize.
- */
 const HANDLE_SIZE = 18; // Size of the resize handles
 const MIN_SIZE = 32;    // Minimum width/height for resizing
+
+// Utility: Detect if running on a mobile device
+function isMobile() {
+  return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+}
 
 const PlacedAsset = ({
   asset,
@@ -31,16 +21,18 @@ const PlacedAsset = ({
   onSelect,
   onEdit,
   onDelete,
+  onMove,
   onDrag,
   onResize,
   stageScale = 1,
-  onDragStart, // new prop
-  onDragEnd,   // new prop
+  onDragStart,
+  onDragEnd,
 }) => {
   const groupRef = useRef();
-  const [dragging, setDragging] = useState(false); // Track if asset is being dragged
-  const [resizing, setResizing] = useState(false); // Track if asset is being resized
-  const [resizeDir, setResizeDir] = useState(null); // Which corner is being resized
+  const [dragging, setDragging] = useState(false);
+  const [resizing, setResizing] = useState(false);
+  const [resizeDir, setResizeDir] = useState(null);
+  const [touchStartTime, setTouchStartTime] = useState(0);
   const wasDraggedOrResized = useRef(false);
 
   // Asset size (default to 48x48 if not specified)
@@ -60,7 +52,7 @@ const PlacedAsset = ({
   useEffect(() => { resizeDirRef.current = resizeDir; }, [resizeDir]);
   useEffect(() => { resizingRef.current = resizing; }, [resizing]);
 
-  // Handler for drag end: update asset position and stop dragging
+  // Handler for drag end
   const handleDragEnd = (e) => {
     setDragging(false);
     if (onDragEnd) onDragEnd();
@@ -69,20 +61,21 @@ const PlacedAsset = ({
       e.cancelBubble = true;
     }
   };
-  // Handler for drag handle mouse/touch down: start dragging
+
+  // Handler for drag handle mouse/touch down
   const handleDragHandleDown = (e) => {
-    e.cancelBubble = true; // Prevent event from bubbling to parent
+    e.cancelBubble = true;
     setDragging(true);
     if (onDragStart) onDragStart();
   };
 
-  // Handlers for resizing logic
   // Start resizing from a given corner
   const handleResizeStart = (dir, e) => {
+    e.cancelBubble = true;
     setResizing(true);
     setResizeDir(dir);
-    // Prevent default to avoid unwanted selection
     if (e && e.evt) e.evt.preventDefault && e.evt.preventDefault();
+    
     // Add global listeners
     window.addEventListener('mousemove', handleResizeMoveGlobal);
     window.addEventListener('touchmove', handleResizeMoveGlobal, { passive: false });
@@ -90,17 +83,19 @@ const PlacedAsset = ({
     window.addEventListener('touchend', handleResizeEndGlobal);
   };
 
-  // Global move handler (defined once)
+  // Global move handler
   const handleResizeMoveGlobal = useCallback((event) => {
     wasDraggedOrResized.current = true;
     if (!resizingRef.current || !resizeDirRef.current) return;
-    let pointer;
+    
     const stage = groupRef.current.getStage();
-    pointer = stage.getPointerPosition();
+    const pointer = stage.getPointerPosition();
+    
     let newWidth = widthRef.current;
     let newHeight = heightRef.current;
     let newX = assetRef.current.x;
     let newY = assetRef.current.y;
+    
     if (resizeDirRef.current === 'se') {
       newWidth = Math.max(MIN_SIZE, pointer.x - assetRef.current.x);
       newHeight = Math.max(MIN_SIZE, pointer.y - assetRef.current.y);
@@ -118,12 +113,13 @@ const PlacedAsset = ({
       newX = pointer.x;
       newY = pointer.y;
     }
+    
     if (onResize) {
       onResize({ ...assetRef.current, x: newX, y: newY, width: newWidth, height: newHeight });
     }
   }, [onResize]);
 
-  // Global end handler (defined once)
+  // Global end handler
   const handleResizeEndGlobal = useCallback(() => {
     setResizing(false);
     setResizeDir(null);
@@ -143,42 +139,68 @@ const PlacedAsset = ({
     };
   }, [handleResizeMoveGlobal, handleResizeEndGlobal]);
 
-  // Menu button positions (distribute around asset)
-  // Edit: top-right, Delete: top-left, Drag: bottom-center
-  const editBtn = { x: width - 16, y: -40 };
-  const deleteBtn = { x: -16, y: -40 };
-  const dragBtn = { x: width / 2 - 16, y: height + 12 };
+  // Improved button positioning for mobile
+  const buttonSize = isMobile() ? 40 : 32;
+  const buttonOffset = isMobile() ? 20 : 16;
+  
+  // Menu button positions - spread them out more on mobile
+  const editBtn = { x: width + buttonOffset, y: -buttonOffset };
+  const deleteBtn = { x: -buttonOffset - buttonSize, y: -buttonOffset };
+  const moveBtn = { x: width / 2 - buttonSize / 2, y: height + buttonOffset };
+  const dragBtn = { x: -buttonOffset - buttonSize, y: height + buttonOffset };
 
   // Render the asset icon (emoji or image)
   const renderIcon = () => {
     if (asset.icon && asset.icon.startsWith('http')) {
-      // Render image icon
       return <KonvaImage image={asset._imgObj} x={0} y={0} width={width} height={height} />;
     }
-    // Render emoji/icon as text
-    return <Text text={asset.icon} fontSize={width * 0.7} x={0} y={0} width={width} height={height} align="center" verticalAlign="middle" />;
+    return (
+      <Text 
+        text={asset.icon} 
+        fontSize={width * 0.7} 
+        x={0} 
+        y={0} 
+        width={width} 
+        height={height} 
+        align="center" 
+        verticalAlign="middle" 
+      />
+    );
   };
 
-  // Define the four resize handles (corners)
-  const handles = [
+  // Define the four resize handles (corners) - only show on desktop or when not mobile
+  const handles = !isMobile() ? [
     { dir: 'nw', x: 0, y: 0 },
     { dir: 'ne', x: width, y: 0 },
     { dir: 'sw', x: 0, y: height },
     { dir: 'se', x: width, y: height },
-  ];
+  ] : [];
 
-  // Helper: handle selection only if not dragging or resizing (for click/tap)
+  // Selection handler with improved mobile support
   const handleSelect = (e) => {
     if (dragging || resizing) return;
+    e.cancelBubble = true;
     if (onSelect) onSelect(e);
   };
 
-  // On touch start, reset drag/resize tracker
+  // Touch handling for mobile
   const handleTouchStart = (e) => {
+    setTouchStartTime(Date.now());
     wasDraggedOrResized.current = false;
+    e.cancelBubble = true;
   };
 
-  // On drag or resize, set tracker
+  const handleTouchEnd = (e) => {
+    const touchDuration = Date.now() - touchStartTime;
+    
+    // Only select if it was a quick tap (not a drag) and we haven't moved
+    if (!wasDraggedOrResized.current && touchDuration < 300 && !dragging && !resizing) {
+      if (onSelect) onSelect(e);
+    }
+    e.cancelBubble = true;
+  };
+
+  // Drag move handler
   const handleDragMove = (e) => {
     wasDraggedOrResized.current = true;
     if (onDrag) {
@@ -187,15 +209,23 @@ const PlacedAsset = ({
     }
   };
 
-  // On touch end, select only if not dragged or resized
-  const handleTouchEnd = (e) => {
-    if (!wasDraggedOrResized.current && !dragging && !resizing) {
-      if (onSelect) onSelect(e);
-    }
+  // Button click handlers with improved mobile support
+  const handleEditClick = (e) => {
+    e.cancelBubble = true;
+    if (onEdit) onEdit();
+  };
+
+  const handleDeleteClick = (e) => {
+    e.cancelBubble = true;
+    if (onDelete) onDelete();
+  };
+
+  const handleMoveClick = (e) => {
+    e.cancelBubble = true;
+    if (onMove) onMove();
   };
 
   return (
-    // Group wraps the asset and all controls, and is draggable only when dragging
     <Group
       ref={groupRef}
       x={asset.x - width / 2}
@@ -203,27 +233,60 @@ const PlacedAsset = ({
       draggable={dragging}
       onDragMove={handleDragMove}
       onDragEnd={handleDragEnd}
-      onClick={handleSelect} // desktop
-      onTap={handleSelect}   // mobile (Konva synthetic)
-      onPointerDown={handleSelect} // fallback for pointer events
+      onClick={handleSelect}
+      onTap={handleSelect}
       onTouchStart={handleTouchStart}
       onTouchEnd={handleTouchEnd}
     >
-      {/* Show border if selected */}
+      {/* Show selection indicator if selected */}
       {selected && (
+        <>
+          {/* Selection border */}
+          <Rect
+            x={-4}
+            y={-4}
+            width={width + 8}
+            height={height + 8}
+            stroke="#3b82f6"
+            strokeWidth={3}
+            cornerRadius={12}
+            dash={[8, 4]}
+          />
+          
+          {/* Selection highlight for mobile */}
+          {isMobile() && (
+            <Circle
+              x={width / 2}
+              y={height / 2}
+              radius={Math.max(width, height) / 2 + 8}
+              stroke="#3b82f6"
+              strokeWidth={2}
+              dash={[5, 5]}
+              opacity={0.3}
+            />
+          )}
+        </>
+      )}
+
+      {/* Asset background for better visibility on mobile */}
+      {isMobile() && (
         <Rect
-          x={-4}
-          y={-4}
-          width={width + 8}
-          height={height + 8}
-          stroke="#3b82f6"
-          strokeWidth={2}
-          cornerRadius={12}
-          dash={[8, 4]}
+          x={-2}
+          y={-2}
+          width={width + 4}
+          height={height + 4}
+          fill="rgba(255, 255, 255, 0.8)"
+          cornerRadius={8}
+          shadowColor="rgba(0, 0, 0, 0.3)"
+          shadowBlur={4}
+          shadowOffsetX={2}
+          shadowOffsetY={2}
         />
       )}
+
       {/* Render the asset icon/image */}
       {renderIcon()}
+
       {/* Show label below icon if present */}
       {asset.label && (
         <Text
@@ -231,40 +294,134 @@ const PlacedAsset = ({
           y={height + 4}
           width={width}
           align="center"
-          fontSize={16}
+          fontSize={isMobile() ? 14 : 16}
           fill="#fff"
           fontStyle="bold"
           shadowColor="#232946"
-          shadowBlur={2}
+          shadowBlur={3}
         />
       )}
-      {/* Menu (edit, delete, drag handle) - only if selected, distributed around asset */}
+
+      {/* Control buttons - only show when selected */}
       {selected && (
         <>
-          {/* Edit button (top-right) */}
+          {/* Edit button */}
           <Group x={editBtn.x} y={editBtn.y}>
-            <Rect x={0} y={0} width={32} height={32} fill="#fff" cornerRadius={16} shadowBlur={2} onClick={onEdit} onTap={onEdit} />
-            <Text text="✏️" x={0} y={0} width={32} height={32} align="center" verticalAlign="middle" fontSize={18} onClick={onEdit} onTap={onEdit} />
+            <Circle
+              x={buttonSize / 2}
+              y={buttonSize / 2}
+              radius={buttonSize / 2}
+              fill="#4ade80"
+              stroke="#16a34a"
+              strokeWidth={2}
+              shadowBlur={4}
+              shadowColor="rgba(0, 0, 0, 0.3)"
+              onClick={handleEditClick}
+              onTap={handleEditClick}
+            />
+            <Text 
+              text="✏️" 
+              x={0} 
+              y={0} 
+              width={buttonSize} 
+              height={buttonSize} 
+              align="center" 
+              verticalAlign="middle" 
+              fontSize={isMobile() ? 18 : 16}
+              onClick={handleEditClick}
+              onTap={handleEditClick}
+            />
           </Group>
-          {/* Delete button (top-left) */}
+
+          {/* Delete button */}
           <Group x={deleteBtn.x} y={deleteBtn.y}>
-            <Rect x={0} y={0} width={32} height={32} fill="#fff" cornerRadius={16} shadowBlur={2} onClick={onDelete} onTap={onDelete} />
-            <Text text="🗑️" x={0} y={0} width={32} height={32} align="center" verticalAlign="middle" fontSize={18} onClick={onDelete} onTap={onDelete} />
-          </Group>
-          {/* Drag handle (bottom-center) */}
-          <Group x={dragBtn.x} y={dragBtn.y}>
-            <Rect x={0} y={0} width={32} height={32} fill="#fff" cornerRadius={16} shadowBlur={2}
-              onMouseDown={handleDragHandleDown}
-              onTouchStart={handleDragHandleDown}
+            <Circle
+              x={buttonSize / 2}
+              y={buttonSize / 2}
+              radius={buttonSize / 2}
+              fill="#f87171"
+              stroke="#dc2626"
+              strokeWidth={2}
+              shadowBlur={4}
+              shadowColor="rgba(0, 0, 0, 0.3)"
+              onClick={handleDeleteClick}
+              onTap={handleDeleteClick}
             />
-            <Text text="⠿" x={0} y={0} width={32} height={32} align="center" verticalAlign="middle" fontSize={18}
-              onMouseDown={handleDragHandleDown}
-              onTouchStart={handleDragHandleDown}
+            <Text 
+              text="🗑️" 
+              x={0} 
+              y={0} 
+              width={buttonSize} 
+              height={buttonSize} 
+              align="center" 
+              verticalAlign="middle" 
+              fontSize={isMobile() ? 18 : 16}
+              onClick={handleDeleteClick}
+              onTap={handleDeleteClick}
             />
           </Group>
+
+          {/* Move button */}
+          <Group x={moveBtn.x} y={moveBtn.y}>
+            <Circle
+              x={buttonSize / 2}
+              y={buttonSize / 2}
+              radius={buttonSize / 2}
+              fill="#fbbf24"
+              stroke="#d97706"
+              strokeWidth={2}
+              shadowBlur={4}
+              shadowColor="rgba(0, 0, 0, 0.3)"
+              onClick={handleMoveClick}
+              onTap={handleMoveClick}
+            />
+            <Text 
+              text="📍" 
+              x={0} 
+              y={0} 
+              width={buttonSize} 
+              height={buttonSize} 
+              align="center" 
+              verticalAlign="middle" 
+              fontSize={isMobile() ? 18 : 16}
+              onClick={handleMoveClick}
+              onTap={handleMoveClick}
+            />
+          </Group>
+
+          {/* Drag handle (desktop only) */}
+          {!isMobile() && (
+            <Group x={dragBtn.x} y={dragBtn.y}>
+              <Circle
+                x={buttonSize / 2}
+                y={buttonSize / 2}
+                radius={buttonSize / 2}
+                fill="#94a3b8"
+                stroke="#475569"
+                strokeWidth={2}
+                shadowBlur={4}
+                shadowColor="rgba(0, 0, 0, 0.3)"
+                onMouseDown={handleDragHandleDown}
+                onTouchStart={handleDragHandleDown}
+              />
+              <Text 
+                text="⠿" 
+                x={0} 
+                y={0} 
+                width={buttonSize} 
+                height={buttonSize} 
+                align="center" 
+                verticalAlign="middle" 
+                fontSize={16}
+                onMouseDown={handleDragHandleDown}
+                onTouchStart={handleDragHandleDown}
+              />
+            </Group>
+          )}
         </>
       )}
-      {/* Render resize handles at corners if selected */}
+
+      {/* Render resize handles at corners (desktop only) */}
       {selected && handles.map(h => (
         <Rect
           key={h.dir}
@@ -300,11 +457,12 @@ PlacedAsset.propTypes = {
   onSelect: PropTypes.func,
   onEdit: PropTypes.func,
   onDelete: PropTypes.func,
+  onMove: PropTypes.func, // new prop for move functionality
   onDrag: PropTypes.func,
   onResize: PropTypes.func,
   stageScale: PropTypes.number,
-  onDragStart: PropTypes.func, // new prop
-  onDragEnd: PropTypes.func,   // new prop
+  onDragStart: PropTypes.func,
+  onDragEnd: PropTypes.func,
 };
 
-export default PlacedAsset; // Export the component 
+export default PlacedAsset;

@@ -4,7 +4,7 @@ import Navbar from '../components/Navbar';
 import { createPortal } from 'react-dom';
 import { Link, useNavigate } from 'react-router-dom';
 import { FaQrcode, FaTrash, FaPlus, FaCheckCircle } from 'react-icons/fa';
-import logo from '../logo.svg';
+import logo from '../logo.svg';   // Assuming you have a logo.svg in your src folder
 
 // --- Dashboard UI ---
 function DashboardHeader({ plan, scanCount, onAddMap, mapCount }) {
