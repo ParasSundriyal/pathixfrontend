@@ -3,14 +3,45 @@ import React, { useEffect, useRef, useState } from 'react';
 const BASE_CANVAS_WIDTH = 800;
 const BASE_CANVAS_HEIGHT = 500;
 
+// Haversine formula to calculate distance between two lat/lng points in meters
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371000; // Earth radius in meters
+  const toRad = deg => deg * Math.PI / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
+}
 
-// Extract map ID from URL path (e.g., /maps/:id)
+// Calculate angle between three points (in degrees)
+function getTurnAngle(p1, p2, p3) {
+  const a = Math.atan2(p2.y - p1.y, p2.x - p1.x);
+  const b = Math.atan2(p3.y - p2.y, p3.x - p2.x);
+  let angle = (b - a) * (180 / Math.PI);
+  if (angle > 180) angle -= 360;
+  if (angle < -180) angle += 360;
+  return angle;
+}
+
+// Snap a point to the nearest point on a polyline
+function snapToPath(point, path) {
+  let minDist = Infinity;
+  let closestIdx = 0;
+  for (let i = 0; i < path.length; i++) {
+    const d = Math.hypot(point.x - path[i].x, point.y - path[i].y);
+    if (d < minDist) {
+      minDist = d;
+      closestIdx = i;
+    }
+  }
+  return { idx: closestIdx, pt: path[closestIdx], dist: minDist };
+}
+
 function getMapIdFromPath() {
   const match = window.location.pathname.match(/\/maps\/(\w+)/);
   return match ? match[1] : null;
 }
-
-
 
 const MapViewer = () => {
   // All hooks must be at the top level, before any logic or early returns
@@ -20,6 +51,10 @@ const MapViewer = () => {
   const [locationError, setLocationError] = useState('');
   const [assetsList, setAssetsList] = useState([]);
   const [navTarget, setNavTarget] = useState(null); // selected asset for navigation
+  const [distanceToTarget, setDistanceToTarget] = useState(null);
+  const [watchId, setWatchId] = useState(null);
+  const [currentInstruction, setCurrentInstruction] = useState('');
+  const [stepIdx, setStepIdx] = useState(0);
   // Map/canvas state
   const [mapData, setMapData] = useState(null);
   const [error, setError] = useState('');
@@ -224,6 +259,129 @@ const MapViewer = () => {
     ctx.restore();
   }, [mapData, bgImageObj, canvasSize, userLocation, navTarget, pan.x, pan.y, zoom]);
 
+  // Watch user position when navigation modal is open
+  useEffect(() => {
+    if (showNavModal && navigator.geolocation) {
+      const id = navigator.geolocation.watchPosition(
+        (pos) => {
+          setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        },
+        (err) => {
+          setLocationError('Location access denied or unavailable.');
+        },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 15000 }
+      );
+      setWatchId(id);
+      return () => {
+        navigator.geolocation.clearWatch(id);
+        setWatchId(null);
+      };
+    }
+    // Cleanup watcher if modal closes
+    return () => {
+      if (watchId) {
+        navigator.geolocation.clearWatch(watchId);
+        setWatchId(null);
+      }
+    };
+    // eslint-disable-next-line
+  }, [showNavModal]);
+
+  // Calculate distance to target when userLocation or navTarget changes
+  useEffect(() => {
+    if (!userLocation || !navTarget || !mapData?.gpsOrigin || !mapData?.gpsScale) {
+      setDistanceToTarget(null);
+      return;
+    }
+    // Convert asset x/y to lat/lng
+    const { x, y } = navTarget;
+    const { lat: originLat, lng: originLng } = mapData.gpsOrigin;
+    const gpsScale = mapData.gpsScale;
+    const assetLng = originLng + (x - BASE_CANVAS_WIDTH / 2) / gpsScale;
+    const assetLat = originLat - (y - BASE_CANVAS_HEIGHT / 2) / gpsScale;
+    const d = haversine(userLocation.lat, userLocation.lng, assetLat, assetLng);
+    setDistanceToTarget(d);
+  }, [userLocation, navTarget, mapData]);
+
+  // Advanced turn-by-turn navigation logic
+  useEffect(() => {
+    if (!userLocation || !navTarget || !mapData?.gpsOrigin || !mapData?.gpsScale || !Array.isArray(mapData.gpsPath)) {
+      setCurrentInstruction('');
+      return;
+    }
+    // Convert user GPS to canvas coordinates
+    const { lat: originLat, lng: originLng } = mapData.gpsOrigin;
+    const gpsScale = mapData.gpsScale;
+    const userX = BASE_CANVAS_WIDTH / 2 + (userLocation.lng - originLng) * gpsScale;
+    const userY = BASE_CANVAS_HEIGHT / 2 - (userLocation.lat - originLat) * gpsScale;
+    // Snap user to path
+    const { idx: userIdx } = snapToPath({ x: userX, y: userY }, mapData.gpsPath);
+    // Snap target to path
+    const { idx: targetIdx } = snapToPath(navTarget, mapData.gpsPath);
+    // Route is from userIdx to targetIdx
+    const route = userIdx <= targetIdx ? mapData.gpsPath.slice(userIdx, targetIdx + 1) : mapData.gpsPath.slice(targetIdx, userIdx + 1).reverse();
+    // If at the end, arrived
+    if (route.length < 2) {
+      setCurrentInstruction('You have arrived at your destination.');
+      window.speechSynthesis.speak(new SpeechSynthesisUtterance('You have arrived at your destination.'));
+      return;
+    }
+    // Find next step
+    let nextStep = stepIdx;
+    if (nextStep >= route.length - 1) nextStep = 0;
+    // Calculate direction
+    let instruction = '';
+    if (route.length > 2 && nextStep < route.length - 2) {
+      const angle = getTurnAngle(route[nextStep], route[nextStep + 1], route[nextStep + 2]);
+      if (Math.abs(angle) < 25) {
+        instruction = `Continue straight for ${haversine(
+          (route[nextStep].y - BASE_CANVAS_HEIGHT / 2) / -gpsScale + originLat,
+          (route[nextStep].x - BASE_CANVAS_WIDTH / 2) / gpsScale + originLng,
+          (route[nextStep + 1].y - BASE_CANVAS_HEIGHT / 2) / -gpsScale + originLat,
+          (route[nextStep + 1].x - BASE_CANVAS_WIDTH / 2) / gpsScale + originLng
+        ).toFixed(0)} meters.`;
+      } else if (angle > 25) {
+        instruction = `Turn left in ${haversine(
+          (route[nextStep].y - BASE_CANVAS_HEIGHT / 2) / -gpsScale + originLat,
+          (route[nextStep].x - BASE_CANVAS_WIDTH / 2) / gpsScale + originLng,
+          (route[nextStep + 1].y - BASE_CANVAS_HEIGHT / 2) / -gpsScale + originLat,
+          (route[nextStep + 1].x - BASE_CANVAS_WIDTH / 2) / gpsScale + originLng
+        ).toFixed(0)} meters.`;
+      } else if (angle < -25) {
+        instruction = `Turn right in ${haversine(
+          (route[nextStep].y - BASE_CANVAS_HEIGHT / 2) / -gpsScale + originLat,
+          (route[nextStep].x - BASE_CANVAS_WIDTH / 2) / gpsScale + originLng,
+          (route[nextStep + 1].y - BASE_CANVAS_HEIGHT / 2) / -gpsScale + originLat,
+          (route[nextStep + 1].x - BASE_CANVAS_WIDTH / 2) / gpsScale + originLng
+        ).toFixed(0)} meters.`;
+      }
+    } else {
+      instruction = `Continue for ${haversine(
+        (route[nextStep].y - BASE_CANVAS_HEIGHT / 2) / -gpsScale + originLat,
+        (route[nextStep].x - BASE_CANVAS_WIDTH / 2) / gpsScale + originLng,
+        (route[nextStep + 1].y - BASE_CANVAS_HEIGHT / 2) / -gpsScale + originLat,
+        (route[nextStep + 1].x - BASE_CANVAS_WIDTH / 2) / gpsScale + originLng
+      ).toFixed(0)} meters.`;
+    }
+    setCurrentInstruction(instruction);
+    // Speak the instruction
+    window.speechSynthesis.cancel();
+    window.speechSynthesis.speak(new SpeechSynthesisUtterance(instruction));
+    // Advance step if user is close to next point
+    const distToNext = Math.hypot(userX - route[nextStep + 1].x, userY - route[nextStep + 1].y);
+    if (distToNext < 15 && nextStep < route.length - 2) {
+      setStepIdx(nextStep + 1);
+    }
+    // Reset step if user restarts navigation
+    if (nextStep === 0 && distToNext > 50) {
+      setStepIdx(0);
+    }
+  }, [userLocation, navTarget, mapData, stepIdx]);
+
+  // Reset step index when new navigation starts
+  useEffect(() => {
+    setStepIdx(0);
+  }, [navTarget]);
 
 
   if (error) {
@@ -247,30 +405,16 @@ const MapViewer = () => {
   // Open navigation modal: ask for location, then show assets
   const handleOpenNavigation = () => {
     setLocationError('');
-    if (!navigator.geolocation) {
-      setLocationError('Geolocation is not supported by your browser.');
-      setShowNavModal(true);
-      return;
+    setShowNavModal(true);
+    // Prepare asset list (landmarks)
+    if (Array.isArray(mapData?.landmarks)) {
+      setAssetsList(mapData.landmarks.map((lm, i) => ({
+        ...lm,
+        displayName: lm.label || lm.name || `Asset #${i + 1}`
+      })));
+    } else {
+      setAssetsList([]);
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setUserLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        // Prepare asset list (landmarks)
-        if (Array.isArray(mapData?.landmarks)) {
-          setAssetsList(mapData.landmarks.map((lm, i) => ({
-            ...lm,
-            displayName: lm.label || lm.name || `Asset #${i + 1}`
-          })));
-        } else {
-          setAssetsList([]);
-        }
-        setShowNavModal(true);
-      },
-      (err) => {
-        setLocationError('Location access denied or unavailable.');
-        setShowNavModal(true);
-      }
-    );
   };
 
   // Select asset to navigate to (future: implement navigation logic)
@@ -366,6 +510,16 @@ const MapViewer = () => {
                             </li>
                           ))}
                         </ul>
+                      )}
+                      {navTarget && distanceToTarget !== null && (
+                        <div className="mt-2 text-blue-700 dark:text-blue-300 text-sm font-semibold">
+                          Distance to target: {distanceToTarget < 1000 ? `${distanceToTarget.toFixed(1)} m` : `${(distanceToTarget/1000).toFixed(2)} km`}
+                        </div>
+                      )}
+                      {currentInstruction && (
+                        <div className="mt-2 text-green-700 dark:text-green-300 text-base font-bold">
+                          {currentInstruction}
+                        </div>
                       )}
                     </>
                   )}
